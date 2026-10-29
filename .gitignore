@@ -23,3 +23,6 @@ build
 # other
 eclipse
 run
+docs
+tools
+AGENTS.md
