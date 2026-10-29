@@ -1,12 +1,14 @@
 # ZenScript MCP
 
-Minecraft 1.12.2 的本地 MCP 模组。当前实现 P0 协议与运行时基线，核心不依赖 CraftTweaker。
+Minecraft 1.12.2 的本地 MCP 模组。当前已实现 P0 协议基线和 P1 通用感知与发现，核心不依赖 CraftTweaker。
 
 ```text
 HTTP /mcp → 两版协议适配 → 工具目录 → 缓存 / 作业 → 对应游戏线程
 ```
 
-默认工具：`mc_status`、`mc_wait`（仅 Tick）、`job_status`、`job_cancel`。
+共 21 个工具：P0 状态/作业工具，以及 P1 目录、玩家、世界、实体、容器、GUI、截图、标准能力、NBT、配方、命令发现和事件读取。
+P1 的 `mc_inventory`、`mc_container`、`mc_chat` 仅开放读取分支。
+开发客户端基础验收已通过；跨模组能力与性能基准仍待验收，范围见 [P1 实现说明](docs/p1-development.md)。
 
 ## 构建与运行
 
@@ -43,11 +45,3 @@ Accept: application/json, text/event-stream
 ```json
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mc_status","arguments":{}}}
 ```
-
-## 阶段交付
-
-每阶段完成后删除全部开发测试代码、脚本、探针、报告和临时环境，规则见 [AGENTS.md](AGENTS.md)。游戏内验证由用户辅助。
-
-GUI 滚轮及完整原始输入事件桥接尚未实现；桌面 Agent 原生连接和 Cleanroom 整合包尚未验收，最终 JAR 加载检查已取消。
-
-详见 [P0 实现说明](docs/p0-development.md) 和 [完整开发方案](docs/development-plan.md)。工程基于 MIT 许可的 [CleanroomMC TemplateDevEnv](https://github.com/CleanroomMC/TemplateDevEnv)。

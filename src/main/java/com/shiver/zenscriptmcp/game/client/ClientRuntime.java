@@ -1,23 +1,33 @@
 package com.shiver.zenscriptmcp.game.client;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.ZenScriptMcpMod;
+import com.shiver.zenscriptmcp.game.query.ContainerTracker;
+import com.shiver.zenscriptmcp.game.query.EventCollector;
+import com.shiver.zenscriptmcp.game.query.QueryService;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.protocol.McpHttpServer;
+import com.shiver.zenscriptmcp.protocol.QueryTools;
 import com.shiver.zenscriptmcp.protocol.ToolRegistry;
+import com.shiver.zenscriptmcp.runtime.EventBuffer;
 import com.shiver.zenscriptmcp.runtime.GameExecutor;
 import com.shiver.zenscriptmcp.runtime.JobManager;
 import com.shiver.zenscriptmcp.runtime.McpConfig;
+import com.shiver.zenscriptmcp.runtime.PageStore;
 import com.shiver.zenscriptmcp.runtime.SnapshotStore;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -35,6 +45,13 @@ public final class ClientRuntime implements AutoCloseable {
     private final GameExecutor executor;
     private final JobManager jobs;
     private final ToolRegistry tools;
+    private final EventBuffer events;
+    private final PageStore pages;
+    private final ScreenReader screens;
+    private final ScreenshotService screenshots;
+    private final ContainerTracker clientContainers;
+    private final ContainerTracker serverContainers;
+    private final EventCollector eventCollector;
 
     private McpHttpServer httpServer;
     private ScheduledExecutorService maintenanceExecutor;
@@ -48,6 +65,17 @@ public final class ClientRuntime implements AutoCloseable {
         executor = new GameExecutor(config.runtime);
         jobs = new JobManager(snapshots, executor, config.runtime.completedJobsRetained);
         tools = new ToolRegistry(snapshots, jobs, config);
+        events = new EventBuffer(snapshots, config.events.capacity);
+        pages = new PageStore(snapshots, config.queries);
+        screens = new ScreenReader(events);
+        screenshots = new ScreenshotService(config.screenshots, screens, gameDirectory, snapshots);
+        clientContainers = new ContainerTracker(events, "client");
+        serverContainers = new ContainerTracker(events, "server");
+        eventCollector = new EventCollector(snapshots, events);
+        QueryService queries = new QueryService(snapshots, jobs, executor, config, events, pages, screens,
+                screenshots, clientContainers, serverContainers);
+        new QueryTools(tools, queries, config).register();
+        tools.setContentProvider(screenshots::content);
     }
 
     public void start() throws IOException {
@@ -56,6 +84,9 @@ public final class ClientRuntime implements AutoCloseable {
         }
 
         MinecraftForge.EVENT_BUS.register(this);
+        MinecraftForge.EVENT_BUS.register(screens);
+        MinecraftForge.EVENT_BUS.register(screenshots);
+        MinecraftForge.EVENT_BUS.register(eventCollector);
 
         try {
             httpServer = new McpHttpServer(config.http, config.loadToken(gameDirectory), tools);
@@ -89,6 +120,8 @@ public final class ClientRuntime implements AutoCloseable {
         }
 
         snapshots.publishClient(createClientSnapshot(minecraft, paused));
+        clientContainers.update(minecraft.player, snapshots.worldEpoch(), clientTicks);
+        screens.update(snapshots.worldEpoch(), clientTicks);
         executor.tick(GameExecutor.Side.CLIENT);
     }
 
@@ -110,13 +143,27 @@ public final class ClientRuntime implements AutoCloseable {
                 "tick", ++serverTicks,
                 "heartbeatAt", Instant.now().toString());
 
+        JsonArray dimensions = new JsonArray();
+        for (WorldServer world : server.worlds) {
+            if (world != null) {
+                dimensions.add(world.provider.getDimension());
+            }
+        }
+        snapshot.add("loadedDimensions", dimensions);
         snapshots.publishServer(snapshot);
+        JsonObject client = snapshots.status().getAsJsonObject("client");
+        EntityPlayerMP player = null;
+        if (client.has("playerUuid") && !client.get("playerUuid").isJsonNull()) {
+            player = server.getPlayerList().getPlayerByUUID(UUID.fromString(client.get("playerUuid").getAsString()));
+        }
+        serverContainers.update(player, snapshots.worldEpoch(), serverTicks);
         executor.tick(GameExecutor.Side.SERVER);
     }
 
     public void serverStopping() {
         jobs.cancelSide(GameExecutor.Side.SERVER);
         executor.drain(GameExecutor.Side.SERVER);
+        serverContainers.update(null, snapshots.worldEpoch(), serverTicks);
         publishServerUnavailable();
     }
 
@@ -124,6 +171,7 @@ public final class ClientRuntime implements AutoCloseable {
     public synchronized void close() {
         snapshots.setLoadingState("stopping");
         jobs.close();
+        screenshots.close();
 
         if (httpServer != null) {
             httpServer.close();
@@ -135,6 +183,9 @@ public final class ClientRuntime implements AutoCloseable {
         }
 
         MinecraftForge.EVENT_BUS.unregister(this);
+        MinecraftForge.EVENT_BUS.unregister(screens);
+        MinecraftForge.EVENT_BUS.unregister(screenshots);
+        MinecraftForge.EVENT_BUS.unregister(eventCollector);
     }
 
     private void startMaintenance() {
@@ -158,6 +209,8 @@ public final class ClientRuntime implements AutoCloseable {
         currentWorld = world;
         snapshots.nextWorld();
         jobs.worldChanged();
+        pages.clearWorld();
+        events.add("client", clientTicks, "world_changed", Json.object("available", world != null));
 
         if (currentWorld == null) {
             publishServerUnavailable();
@@ -173,6 +226,7 @@ public final class ClientRuntime implements AutoCloseable {
                 "available", true,
                 "worldAvailable", currentWorld != null,
                 "playerAvailable", minecraft.player != null,
+                "playerUuid", minecraft.player == null ? null : minecraft.player.getUniqueID().toString(),
                 "paused", paused,
                 "tick", clientTicks,
                 "heartbeatAt", Instant.now().toString(),

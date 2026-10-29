@@ -1,6 +1,7 @@
 package com.shiver.zenscriptmcp.protocol;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.Tags;
 import com.shiver.zenscriptmcp.model.DomainException;
@@ -23,6 +24,7 @@ public final class ToolRegistry {
     private final SnapshotStore snapshots;
     private final JobManager jobs;
     private final McpConfig config;
+    private Function<JsonObject, JsonArray> contentProvider = result -> new JsonArray();
 
     public ToolRegistry(SnapshotStore snapshots, JobManager jobs, McpConfig config) {
         this.snapshots = snapshots;
@@ -40,13 +42,23 @@ public final class ToolRegistry {
             JsonObject inputSchema,
             boolean readOnly,
             Function<JsonObject, JsonObject> handler) {
+        register(name, description, inputSchema, readOnly, !readOnly, handler);
+    }
+
+    public void register(
+            String name,
+            String description,
+            JsonObject inputSchema,
+            boolean readOnly,
+            boolean destructive,
+            Function<JsonObject, JsonObject> handler) {
         if (tools.containsKey(name)) {
             throw new IllegalArgumentException("工具重名：" + name);
         }
 
         JsonObject annotations = Json.object(
                 "readOnlyHint", readOnly,
-                "destructiveHint", !readOnly,
+                "destructiveHint", destructive,
                 "openWorldHint", false);
         JsonObject definition = Json.object(
                 "name", name,
@@ -65,6 +77,10 @@ public final class ToolRegistry {
         }
 
         return Json.object("tools", definitions);
+    }
+
+    public void setContentProvider(Function<JsonObject, JsonArray> contentProvider) {
+        this.contentProvider = contentProvider;
     }
 
     public JsonObject call(String name, JsonObject arguments) {
@@ -134,6 +150,9 @@ public final class ToolRegistry {
         data.addProperty("modVersion", Tags.VERSION);
         data.add("protocolVersions", Json.GSON.toJsonTree(ProtocolAdapter.SUPPORTED_VERSIONS));
         data.add("integrations", Json.object());
+        data.add("queryBudget", Json.GSON.toJsonTree(config.queries));
+        data.add("eventBudget", Json.GSON.toJsonTree(config.events));
+        data.add("screenshotBudget", Json.GSON.toJsonTree(config.screenshots));
 
         return snapshots.result("completed", "data", data);
     }
@@ -163,6 +182,7 @@ public final class ToolRegistry {
                 "schemaVersion", Json.object("type", "integer", "const", 1),
                 "status", Schema.enumeration("accepted", "completed", "error"),
                 "context", createContextSchema(),
+                "observation", createObservationSchema(),
                 "data", Json.object("type", "object"),
                 "job", Json.object("type", "object"),
                 "error", Json.object("type", "object"));
@@ -190,14 +210,33 @@ public final class ToolRegistry {
                 "properties", properties);
     }
 
-    private static JsonObject createToolResult(JsonObject domainResult) {
+    private static JsonObject createObservationSchema() {
+        JsonObject properties = Json.object(
+                "source", Schema.enumeration("client", "server", "runtime"),
+                "worldEpoch", Json.object("type", "integer"),
+                "tick", Json.object("type", "integer"),
+                "startedTick", Json.object("type", "integer"),
+                "endedTick", Json.object("type", "integer"),
+                "capturedAt", Json.object("type", "string"),
+                "revision", Json.object("type", "integer"),
+                "coverage", Schema.enumeration("complete", "partial"),
+                "unavailable", Json.object("type", "array", "items", Json.object("type", "string")));
+        return Json.object("type", "object", "properties", properties,
+                "required", new String[] {"source", "worldEpoch", "capturedAt", "revision", "coverage", "unavailable"});
+    }
+
+    private JsonObject createToolResult(JsonObject domainResult) {
         boolean error = "error".equals(domainResult.get("status").getAsString());
+        JsonArray media = contentProvider.apply(domainResult);
         JsonArray content = new JsonArray();
 
         // 文本保留完整数据，兼容不读取 structuredContent 的客户端。
         content.add(Json.object(
                 "type", "text",
                 "text", Json.GSON.toJson(domainResult)));
+        for (JsonElement item : media) {
+            content.add(item);
+        }
 
         return Json.object(
                 "content", content,

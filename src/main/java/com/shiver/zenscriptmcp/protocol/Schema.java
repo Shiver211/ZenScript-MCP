@@ -1,5 +1,6 @@
 package com.shiver.zenscriptmcp.protocol;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.model.Json;
@@ -43,11 +44,46 @@ public final class Schema {
                 "maximum", maximum);
     }
 
+    public static JsonObject number(double minimum, double maximum) {
+        return Json.object("type", "number", "minimum", minimum, "maximum", maximum);
+    }
+
+    public static JsonObject bool() {
+        return Json.object("type", "boolean");
+    }
+
+    public static JsonObject array(JsonObject items, int maximum) {
+        return Json.object("type", "array", "items", items, "maxItems", maximum);
+    }
+
+    public static JsonObject oneOf(JsonObject... variants) {
+        JsonArray alternatives = new JsonArray();
+        for (JsonObject variant : variants) {
+            alternatives.add(variant);
+        }
+        return Json.object("oneOf", alternatives);
+    }
+
     public static void validate(JsonObject schema, JsonElement value) {
         validate(schema, value, "arguments");
     }
 
     private static void validate(JsonObject schema, JsonElement value, String path) {
+        if (schema.has("oneOf")) {
+            int matches = 0;
+            for (JsonElement alternative : schema.getAsJsonArray("oneOf")) {
+                try {
+                    validate(alternative.getAsJsonObject(), value, path);
+                    matches++;
+                } catch (IllegalArgumentException exception) {
+                    // 只捕获参数不匹配；schema 实现错误继续向上传播。
+                }
+            }
+            if (matches != 1) {
+                throw invalidParameter(path);
+            }
+            return;
+        }
         String type = schema.get("type").getAsString();
         if (value == null || value.isJsonNull()) {
             throw invalidParameter(path);
@@ -62,6 +98,17 @@ public final class Schema {
                 break;
             case "integer":
                 validateInteger(schema, value, path);
+                break;
+            case "number":
+                validateNumber(schema, value, path);
+                break;
+            case "boolean":
+                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) {
+                    throw invalidParameter(path);
+                }
+                break;
+            case "array":
+                validateArray(schema, value, path);
                 break;
             default:
                 throw new IllegalStateException("未实现的 schema 类型：" + type);
@@ -112,6 +159,13 @@ public final class Schema {
     }
 
     private static void validateInteger(JsonObject schema, JsonElement value, String path) {
+        validateNumber(schema, value, path);
+        if (value.getAsBigDecimal().stripTrailingZeros().scale() > 0) {
+            throw invalidParameter(path);
+        }
+    }
+
+    private static void validateNumber(JsonObject schema, JsonElement value, String path) {
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
             throw invalidParameter(path);
         }
@@ -119,11 +173,20 @@ public final class Schema {
         BigDecimal number = value.getAsBigDecimal();
         BigDecimal minimum = schema.get("minimum").getAsBigDecimal();
         BigDecimal maximum = schema.get("maximum").getAsBigDecimal();
-        boolean fractional = number.stripTrailingZeros().scale() > 0;
         boolean outOfRange = number.compareTo(minimum) < 0 || number.compareTo(maximum) > 0;
 
-        if (fractional || outOfRange) {
+        if (outOfRange) {
             throw invalidParameter(path);
+        }
+    }
+
+    private static void validateArray(JsonObject schema, JsonElement value, String path) {
+        if (!value.isJsonArray() || value.getAsJsonArray().size() > schema.get("maxItems").getAsInt()) {
+            throw invalidParameter(path);
+        }
+        int index = 0;
+        for (JsonElement item : value.getAsJsonArray()) {
+            validate(schema.getAsJsonObject("items"), item, path + "[" + index++ + "]");
         }
     }
 

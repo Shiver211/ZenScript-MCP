@@ -1,5 +1,6 @@
 package com.shiver.zenscriptmcp.runtime;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.model.Json;
 import java.time.Instant;
@@ -44,6 +45,21 @@ public final class SnapshotStore {
         return Json.object(
                 "instanceId", instanceId,
                 "worldEpoch", worldEpoch());
+    }
+
+    public JsonObject observation(String source, long startedTick, JsonArray unavailable) {
+        JsonObject snapshot = status().getAsJsonObject(source);
+        long tick = snapshot != null && snapshot.has("tick") ? snapshot.get("tick").getAsLong() : 0;
+        return Json.object(
+                "source", source,
+                "worldEpoch", worldEpoch(),
+                "tick", tick,
+                "startedTick", startedTick,
+                "endedTick", tick,
+                "capturedAt", Instant.now().toString(),
+                "revision", revision.incrementAndGet(),
+                "coverage", unavailable.size() == 0 ? "complete" : "partial",
+                "unavailable", unavailable);
     }
 
     public JsonObject status() {

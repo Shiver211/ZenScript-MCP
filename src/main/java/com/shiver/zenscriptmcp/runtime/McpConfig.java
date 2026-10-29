@@ -27,6 +27,9 @@ public final class McpConfig {
     public boolean enabled = true;
     public HttpSettings http = new HttpSettings();
     public RuntimeSettings runtime = new RuntimeSettings();
+    public QuerySettings queries = new QuerySettings();
+    public EventSettings events = new EventSettings();
+    public ScreenshotSettings screenshots = new ScreenshotSettings();
 
     public static McpConfig load(Path gameDirectory) throws IOException {
         Path configPath = gameDirectory.resolve(CONFIG_FILE);
@@ -40,7 +43,8 @@ public final class McpConfig {
             writeConfig(configPath, config);
         }
 
-        if (config == null || config.http == null || config.runtime == null) {
+        if (config == null || config.http == null || config.runtime == null
+                || config.queries == null || config.events == null || config.screenshots == null) {
             throw new IOException("MCP 配置不能为空");
         }
 
@@ -51,6 +55,15 @@ public final class McpConfig {
     public void validate() throws IOException {
         validateHttpSettings();
         validateRuntimeSettings();
+        if (queries.defaultLimit < 1 || queries.defaultLimit > queries.maxLimit || queries.maxLimit > 1000
+                || queries.maxBlocksPerTick < 1 || queries.maxScanBlocks < 1 || queries.maxResults < 1
+                || queries.maxPageBytes < 4096 || queries.maxPageBytes > 524_288
+                || queries.retainedPages < 1 || queries.maxCacheBytes < queries.maxPageBytes
+                || queries.maxNbtNodes < 1 || queries.maxNbtBytes < 1024 || queries.maxNbtDepth < 1
+                || events.capacity < 1 || screenshots.maxWidth < 1 || screenshots.maxWidth > 4096
+                || screenshots.maxHeight < 1 || screenshots.maxHeight > 4096) {
+            throw new IOException("查询、事件或截图预算无效");
+        }
     }
 
     public String loadToken(Path gameDirectory) throws IOException {
@@ -83,7 +96,7 @@ public final class McpConfig {
 
     private void validateHttpSettings() throws IOException {
         if (http.host == null || !InetAddress.getByName(http.host).isLoopbackAddress()) {
-            throw new IOException("P0 仅支持回环地址");
+            throw new IOException("仅支持回环地址");
         }
 
         boolean invalidPort = http.port < 1 || http.port > MAX_PORT;
@@ -128,5 +141,31 @@ public final class McpConfig {
         public int readBudgetMillis = 2;
         public int defaultTimeoutMillis = 15_000;
         public int completedJobsRetained = 128;
+    }
+
+    public static final class QuerySettings {
+
+        public int defaultLimit = 100;
+        public int maxLimit = 1000;
+        public int maxBlocksPerTick = 2048;
+        public int maxScanBlocks = 262_144;
+        public int maxResults = 10_000;
+        public int maxPageBytes = 262_144;
+        public int retainedPages = 32;
+        public int maxCacheBytes = 16_777_216;
+        public int maxNbtNodes = 4096;
+        public int maxNbtBytes = 131_072;
+        public int maxNbtDepth = 32;
+    }
+
+    public static final class EventSettings {
+
+        public int capacity = 5000;
+    }
+
+    public static final class ScreenshotSettings {
+
+        public int maxWidth = 1280;
+        public int maxHeight = 720;
     }
 }
