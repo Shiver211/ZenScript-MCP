@@ -5,7 +5,7 @@ import com.shiver.zenscriptmcp.game.query.QueryService;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.runtime.McpConfig;
 
-/** P1 只登记实际实现的读取分支，工具参数是唯一对外契约。 */
+/** 登记实际实现的读取分支，工具参数是唯一对外契约。 */
 public final class QueryTools {
 
     private static final int WORLD_BORDER = 30_000_000;

@@ -7,9 +7,11 @@ import com.shiver.zenscriptmcp.game.query.ContainerTracker;
 import com.shiver.zenscriptmcp.game.query.EventCollector;
 import com.shiver.zenscriptmcp.game.query.QueryService;
 import com.shiver.zenscriptmcp.model.Json;
+import com.shiver.zenscriptmcp.protocol.ActionTools;
 import com.shiver.zenscriptmcp.protocol.McpHttpServer;
 import com.shiver.zenscriptmcp.protocol.QueryTools;
 import com.shiver.zenscriptmcp.protocol.ToolRegistry;
+import com.shiver.zenscriptmcp.protocol.WaitTools;
 import com.shiver.zenscriptmcp.runtime.EventBuffer;
 import com.shiver.zenscriptmcp.runtime.GameExecutor;
 import com.shiver.zenscriptmcp.runtime.JobManager;
@@ -25,13 +27,16 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.lwjgl.input.Keyboard;
 
 /** 装配服务并在客户端、内置服务端各自的 Tick 中发布快照和推进作业。 */
 public final class ClientRuntime implements AutoCloseable {
@@ -52,6 +57,11 @@ public final class ClientRuntime implements AutoCloseable {
     private final ContainerTracker clientContainers;
     private final ContainerTracker serverContainers;
     private final EventCollector eventCollector;
+    private final InputController inputs;
+    private final GuiInputBridge gui;
+    private final TransactionTracker transactions = new TransactionTracker();
+    private final KeyBinding stopBinding = new KeyBinding("key.zenscriptmcp.stop", Keyboard.KEY_F8,
+            "key.categories.zenscriptmcp");
 
     private McpHttpServer httpServer;
     private ScheduledExecutorService maintenanceExecutor;
@@ -72,9 +82,17 @@ public final class ClientRuntime implements AutoCloseable {
         clientContainers = new ContainerTracker(events, "client");
         serverContainers = new ContainerTracker(events, "server");
         eventCollector = new EventCollector(snapshots, events);
+        BindingRegistry bindings = new BindingRegistry();
+        inputs = new InputController(bindings);
+        gui = new GuiInputBridge(screens, snapshots);
+        ClientRegistry.registerKeyBinding(stopBinding);
         QueryService queries = new QueryService(snapshots, jobs, executor, config, events, pages, screens,
-                screenshots, clientContainers, serverContainers);
+                screenshots, clientContainers, serverContainers, bindings);
         new QueryTools(tools, queries, config).register();
+        ActionService actions = new ActionService(snapshots, executor, jobs, config, events, inputs,
+                clientContainers, gui, transactions);
+        new ActionTools(tools, actions, queries).register();
+        new WaitTools(tools, queries, jobs, snapshots, config).register();
         tools.setContentProvider(screenshots::content);
     }
 
@@ -87,6 +105,8 @@ public final class ClientRuntime implements AutoCloseable {
         MinecraftForge.EVENT_BUS.register(screens);
         MinecraftForge.EVENT_BUS.register(screenshots);
         MinecraftForge.EVENT_BUS.register(eventCollector);
+        MinecraftForge.EVENT_BUS.register(inputs);
+        MinecraftForge.EVENT_BUS.register(gui);
 
         try {
             httpServer = new McpHttpServer(config.http, config.loadToken(gameDirectory), tools);
@@ -108,6 +128,7 @@ public final class ClientRuntime implements AutoCloseable {
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.START) {
+            inputs.endTick();
             return;
         }
 
@@ -122,6 +143,11 @@ public final class ClientRuntime implements AutoCloseable {
         snapshots.publishClient(createClientSnapshot(minecraft, paused));
         clientContainers.update(minecraft.player, snapshots.worldEpoch(), clientTicks);
         screens.update(snapshots.worldEpoch(), clientTicks);
+        transactions.update();
+        if (stopBinding.isPressed() || Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) {
+            jobs.cancelMutation(null);
+        }
+        inputs.beginTick();
         executor.tick(GameExecutor.Side.CLIENT);
     }
 
@@ -171,6 +197,11 @@ public final class ClientRuntime implements AutoCloseable {
     public synchronized void close() {
         snapshots.setLoadingState("stopping");
         jobs.close();
+        if (Minecraft.getMinecraft().isCallingFromMinecraftThread()) {
+            executor.drain(GameExecutor.Side.CLIENT);
+            inputs.clear();
+        }
+        transactions.close();
         screenshots.close();
 
         if (httpServer != null) {
@@ -186,6 +217,8 @@ public final class ClientRuntime implements AutoCloseable {
         MinecraftForge.EVENT_BUS.unregister(screens);
         MinecraftForge.EVENT_BUS.unregister(screenshots);
         MinecraftForge.EVENT_BUS.unregister(eventCollector);
+        MinecraftForge.EVENT_BUS.unregister(inputs);
+        MinecraftForge.EVENT_BUS.unregister(gui);
     }
 
     private void startMaintenance() {
@@ -209,6 +242,7 @@ public final class ClientRuntime implements AutoCloseable {
         currentWorld = world;
         snapshots.nextWorld();
         jobs.worldChanged();
+        inputs.clear();
         pages.clearWorld();
         events.add("client", clientTicks, "world_changed", Json.object("available", world != null));
 

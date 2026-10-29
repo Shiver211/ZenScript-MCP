@@ -56,13 +56,23 @@ public final class ContainerTracker {
             data.add("nextSlotOffset", Json.GSON.toJsonTree(
                     offset + count < container.inventorySlots.size() ? offset + count : null));
         }
-        String serialized = Json.GSON.toJson(data);
+        // 修订只取决于实际完整状态，不取决于本次分页或字段投影。
+        StringBuilder state = new StringBuilder();
+        state.append(player.inventory.currentItem).append(':').append(itemState(player.inventory.getItemStack()));
+        for (Slot slot : container.inventorySlots) {
+            state.append('|').append(slot.slotNumber).append(':').append(itemState(slot.getStack()));
+        }
+        String serialized = state.toString();
         if (!serialized.equals(identity.lastJson)) {
             identity.revision = ++revision;
             identity.lastJson = serialized;
         }
         data.addProperty("revision", identity.revision);
         return data;
+    }
+
+    private static String itemState(ItemStack stack) {
+        return stack.isEmpty() ? "empty" : stack.serializeNBT().toString();
     }
 
     public ItemStack item(QueryContext context, EntityPlayer player, JsonObject target) {
@@ -84,6 +94,14 @@ public final class ContainerTracker {
 
     public String currentId() {
         return open.id;
+    }
+
+    public Container requireOpen(EntityPlayer player, long epoch, long tick, String id) {
+        update(player, epoch, tick);
+        if (id == null || !id.equals(open.id)) {
+            throw new DomainException("stale_reference", "操作必须使用当前客户端打开容器的 containerId");
+        }
+        return open.container;
     }
 
     private JsonArray slots(QueryContext context, EntityPlayer player, Container container, JsonObject arguments) {

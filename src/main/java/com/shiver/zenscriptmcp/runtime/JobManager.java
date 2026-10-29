@@ -66,7 +66,7 @@ public final class JobManager {
         long worldEpoch = snapshots.worldEpoch();
         long deadlineNanos = nanoClock.getAsLong() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         Job job = new Job(
-                toolName, arguments, side, task, worldBound, worldEpoch,
+                toolName, arguments, side, task, modifiesGameState, worldBound, worldEpoch,
                 deadlineNanos, operationId, timeoutMillis);
 
         jobs.put(job.id, job);
@@ -95,6 +95,17 @@ public final class JobManager {
         JsonObject data = toJson(job);
         data.addProperty("cancelAccepted", cancelAccepted);
         return snapshots.result("completed", "job", data);
+    }
+
+    public synchronized JsonObject cancelMutation(String toolName) {
+        if (exclusiveJobId == null) {
+            return snapshots.result("completed", "data", Json.object("cancelAccepted", false));
+        }
+        Job job = jobs.get(exclusiveJobId);
+        if (toolName != null && !toolName.equals(job.toolName)) {
+            throw new DomainException("busy", "当前运行的是另一类修改作业");
+        }
+        return cancel(exclusiveJobId);
     }
 
     public synchronized JsonObject summary() {
@@ -187,7 +198,7 @@ public final class JobManager {
 
     private void scheduleNewJob(Job job) {
         try {
-            executor.submit(job.side, () -> advance(job));
+            schedule(job);
         } catch (RuntimeException exception) {
             jobs.remove(job.id);
             releaseMutationLock(job);
@@ -215,7 +226,11 @@ public final class JobManager {
         if (isStopRequested(job) || result != null || failure != null) {
             finishJob(job, result, failure);
         } else {
-            executor.submit(job.side, () -> advance(job));
+            try {
+                schedule(job);
+            } catch (RuntimeException exception) {
+                finishJob(job, null, exception);
+            }
         }
     }
 
@@ -235,6 +250,14 @@ public final class JobManager {
         }
 
         return true;
+    }
+
+    private void schedule(Job job) {
+        if (job.modifiesGameState) {
+            executor.submitAction(job.side, () -> advance(job));
+        } else {
+            executor.submit(job.side, () -> advance(job));
+        }
     }
 
     private synchronized boolean isStopRequested(Job job) {
@@ -272,6 +295,13 @@ public final class JobManager {
     }
 
     private void applyOutcome(Job job, JsonObject result, Exception failure, Exception cleanupFailure) {
+        JsonObject evidence = result;
+        if (evidence == null && job.task != null) {
+            evidence = job.task.lastResult();
+        }
+        if (evidence != null) {
+            job.result = Json.copy(evidence);
+        }
         if (cleanupFailure != null) {
             job.state = JobState.FAILED;
             job.error = createError("cleanup_failed", cleanupFailure.toString());
@@ -388,6 +418,11 @@ public final class JobManager {
         /** 作业开始后，所有结束路径都会在所属游戏线程调用清理。 */
         default void cleanup() throws Exception {
         }
+
+        /** 取消或失败时保留最后一次 DTO 证据；不得在此跨线程读取游戏。 */
+        default JsonObject lastResult() {
+            return null;
+        }
     }
 
     private enum JobState {
@@ -418,6 +453,7 @@ public final class JobManager {
         private final JsonObject arguments;
         private final GameExecutor.Side side;
         private final boolean worldBound;
+        private final boolean modifiesGameState;
         private final long worldEpoch;
         private final long deadlineNanos;
         private final int timeoutMillis;
@@ -438,6 +474,7 @@ public final class JobManager {
                 JsonObject arguments,
                 GameExecutor.Side side,
                 Task task,
+                boolean modifiesGameState,
                 boolean worldBound,
                 long worldEpoch,
                 long deadlineNanos,
@@ -447,6 +484,7 @@ public final class JobManager {
             this.arguments = Json.copy(arguments);
             this.side = side;
             this.task = task;
+            this.modifiesGameState = modifiesGameState;
             this.worldBound = worldBound;
             this.worldEpoch = worldEpoch;
             this.deadlineNanos = deadlineNanos;

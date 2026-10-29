@@ -1,14 +1,16 @@
 # ZenScript MCP
 
-Minecraft 1.12.2 的本地 MCP 模组。当前已实现 P0 协议基线和 P1 通用感知与发现，核心不依赖 CraftTweaker。
+Minecraft 1.12.2 的本地 MCP 模组。当前已实现 P0 协议基线、P1 通用感知与发现和 P2 通用操作，核心不依赖 CraftTweaker。
 
 ```text
 HTTP /mcp → 两版协议适配 → 工具目录 → 缓存 / 作业 → 对应游戏线程
 ```
 
-共 21 个工具：P0 状态/作业工具，以及 P1 目录、玩家、世界、实体、容器、GUI、截图、标准能力、NBT、配方、命令发现和事件读取。
-P1 的 `mc_inventory`、`mc_container`、`mc_chat` 仅开放读取分支。
-开发客户端基础验收已通过；跨模组能力与性能基准仍待验收，范围见 [P1 实现说明](docs/p1-development.md)。
+共 30 个工具：状态与作业、目录与世界读取，以及玩家输入、方块/实体交互、容器操作、GUI 输入、命令与聊天。
+`mc_inventory`、`mc_container`、`mc_chat` 支持读取与修改分支；`mc_wait` 支持 Tick 和受限只读条件。
+P1、P2 开发客户端基础验收已通过；P2 已实测输入、交互、容器、GUI、合成、命令及存档进出。
+第三方模组按键、真实容器拒绝回包及 Cleanroom 兼容性仍待验收。
+参数、示例和覆盖边界见 [P1 实现说明](docs/p1-development.md) 与 [P2 实现说明](docs/p2-development.md)。
 
 ## 构建与运行
 
@@ -16,6 +18,7 @@ P1 的 `mc_inventory`、`mc_container`、`mc_chat` 仅开放读取分支。
 
 ```powershell
 # JAVA_HOME 指向 Java 25；wrapper 自动解析 Java 8 工具链。
+# 先退出开发客户端，再构建，避免覆盖运行中加载的开发 JAR。
 .\gradlew.bat assemble        # 编译并生成重混淆 JAR
 .\gradlew.bat runClient
 ```

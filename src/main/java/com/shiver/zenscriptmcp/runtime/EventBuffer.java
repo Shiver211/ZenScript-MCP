@@ -49,6 +49,10 @@ public final class EventBuffer {
         }
     }
 
+    public synchronized String cursor() {
+        return encodeCursor(sequence);
+    }
+
     public synchronized JsonObject read(JsonObject arguments, boolean chatOnly, int defaultLimit) {
         long cursor = arguments.has("cursor") ? decodeCursor(arguments.get("cursor").getAsString()) : 0;
         int limit = arguments.has("limit") ? arguments.get("limit").getAsInt() : defaultLimit;

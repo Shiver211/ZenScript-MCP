@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.data.CapabilityReader;
 import com.shiver.zenscriptmcp.data.NbtReader;
+import com.shiver.zenscriptmcp.game.client.BindingRegistry;
 import com.shiver.zenscriptmcp.game.client.ScreenReader;
 import com.shiver.zenscriptmcp.game.client.ScreenshotService;
 import com.shiver.zenscriptmcp.model.DomainException;
@@ -41,7 +42,7 @@ public final class QueryService {
 
     public QueryService(SnapshotStore snapshots, JobManager jobs, GameExecutor executor, McpConfig config,
             EventBuffer events, PageStore pages, ScreenReader screens, ScreenshotService screenshots,
-            ContainerTracker clientContainers, ContainerTracker serverContainers) {
+            ContainerTracker clientContainers, ContainerTracker serverContainers, BindingRegistry bindings) {
         this.snapshots = snapshots;
         this.jobs = jobs;
         this.executor = executor;
@@ -52,7 +53,7 @@ public final class QueryService {
         this.screenshots = screenshots;
         this.clientContainers = clientContainers;
         this.serverContainers = serverContainers;
-        catalog = new CatalogReader(snapshots);
+        catalog = new CatalogReader(snapshots, bindings);
     }
 
     public JsonObject submit(String tool, JsonObject arguments) {

@@ -56,6 +56,9 @@ public final class ToolRegistry {
             throw new IllegalArgumentException("工具重名：" + name);
         }
 
+        // MCP 工具输入的根类型必须显式为 object，包含 oneOf 的动作分支也遵守此约定。
+        inputSchema = Json.copy(inputSchema);
+        inputSchema.addProperty("type", "object");
         JsonObject annotations = Json.object(
                 "readOnlyHint", readOnly,
                 "destructiveHint", destructive,
@@ -77,6 +80,27 @@ public final class ToolRegistry {
         }
 
         return Json.object("tools", definitions);
+    }
+
+    public void replace(String name, String description, JsonObject schema, boolean readOnly,
+            Function<JsonObject, JsonObject> handler) {
+        if (!tools.containsKey(name)) {
+            throw new IllegalArgumentException("待扩展工具不存在：" + name);
+        }
+        tools.remove(name);
+        register(name, description, schema, readOnly, handler);
+    }
+
+    public JsonObject inputSchema(String name) {
+        Tool tool = tools.get(name);
+        if (tool == null) {
+            throw new IllegalArgumentException("未知工具：" + name);
+        }
+        return Json.copy(tool.definition.getAsJsonObject("inputSchema"));
+    }
+
+    public void validate(String name, JsonObject arguments) {
+        Schema.validate(inputSchema(name), arguments);
     }
 
     public void setContentProvider(Function<JsonObject, JsonArray> contentProvider) {

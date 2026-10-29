@@ -11,6 +11,8 @@ public final class GameExecutor {
 
     private final ArrayBlockingQueue<Runnable> clientTasks = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final ArrayBlockingQueue<Runnable> serverTasks = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+    private final ArrayBlockingQueue<Runnable> clientActions = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+    private final ArrayBlockingQueue<Runnable> serverActions = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final int maxTasksPerTick;
     private final long tickBudgetNanos;
 
@@ -25,7 +27,20 @@ public final class GameExecutor {
         }
     }
 
+    public void submitAction(Side side, Runnable task) {
+        ArrayBlockingQueue<Runnable> queue = side == Side.CLIENT ? clientActions : serverActions;
+        if (!queue.offer(task)) {
+            throw new DomainException("busy", "动作线程队列已满");
+        }
+    }
+
     public void tick(Side side) {
+        // 修改作业优先推进一次，避免只读扫描使按键超过预定持续时间。
+        ArrayBlockingQueue<Runnable> actions = side == Side.CLIENT ? clientActions : serverActions;
+        Runnable action = actions.poll();
+        if (action != null) {
+            action.run();
+        }
         ArrayBlockingQueue<Runnable> queue = queueFor(side);
         int tasksToRun = Math.min(queue.size(), maxTasksPerTick);
         long startedNanos = System.nanoTime();
@@ -46,6 +61,14 @@ public final class GameExecutor {
 
     /** 仅在该端停止事件中调用；先标记取消，再清理剩余任务。 */
     public void drain(Side side) {
+        ArrayBlockingQueue<Runnable> actions = side == Side.CLIENT ? clientActions : serverActions;
+        int actionCount = actions.size();
+        for (int index = 0; index < actionCount; index++) {
+            Runnable action = actions.poll();
+            if (action != null) {
+                action.run();
+            }
+        }
         ArrayBlockingQueue<Runnable> queue = queueFor(side);
         int tasksToDrain = queue.size();
 

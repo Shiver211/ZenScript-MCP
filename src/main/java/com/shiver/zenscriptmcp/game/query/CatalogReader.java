@@ -2,16 +2,15 @@ package com.shiver.zenscriptmcp.game.query;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.shiver.zenscriptmcp.game.client.BindingRegistry;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.runtime.JobManager;
 import com.shiver.zenscriptmcp.runtime.PageStore;
 import com.shiver.zenscriptmcp.runtime.SnapshotStore;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.settings.KeyBinding;
@@ -29,14 +28,12 @@ import net.minecraftforge.fml.common.registry.ForgeRegistries;
 /** 从本实例注册表发现内容；按键 ID 绑定对象身份，改键只改变目录版本。 */
 public final class CatalogReader {
 
-    private final Map<KeyBinding, String> bindingIds = new IdentityHashMap<>();
+    private final BindingRegistry bindings;
     private final SnapshotStore snapshots;
-    private String bindingSignature = "";
-    private long bindingSequence;
-    private long bindingVersion;
 
-    public CatalogReader(SnapshotStore snapshots) {
+    public CatalogReader(SnapshotStore snapshots, BindingRegistry bindings) {
         this.snapshots = snapshots;
+        this.bindings = bindings;
     }
 
     public JobManager.Task task(QueryContext context, JsonObject arguments, PageStore pages) {
@@ -66,14 +63,14 @@ public final class CatalogReader {
                 break;
             case "keybindings":
                 entries.addAll(Arrays.asList(Minecraft.getMinecraft().gameSettings.keyBindings));
-                updateBindings(entries);
+                bindings.refresh();
                 break;
             default:
                 throw new IllegalArgumentException("未知目录类型");
         }
         JsonObject metadata = Json.object("kind", kind, "entryKind", "registered");
         if ("keybindings".equals(kind)) {
-            metadata.addProperty("catalogVersion", bindingVersion);
+            metadata.addProperty("catalogVersion", bindings.version());
         }
         return new ListQueryTask<>("mc_catalog", context, arguments, entries.iterator(), entry -> {
             JsonObject readFields = arguments.has("query") ? Json.object() : arguments;
@@ -131,7 +128,7 @@ public final class CatalogReader {
             }
         } else if (entry instanceof KeyBinding) {
             KeyBinding binding = (KeyBinding) entry;
-            result.addProperty("id", bindingIds.get(binding));
+            result.addProperty("id", bindings.id(binding));
             result.addProperty("name", binding.getKeyDescription());
             result.addProperty("category", binding.getKeyCategory());
             result.addProperty("keyCode", binding.getKeyCode());
@@ -142,24 +139,6 @@ public final class CatalogReader {
             context.field(result, arguments, "displayName", binding::getDisplayName);
         }
         return result;
-    }
-
-    private void updateBindings(List<Object> entries) {
-        StringBuilder signature = new StringBuilder();
-        for (Object entry : entries) {
-            KeyBinding binding = (KeyBinding) entry;
-            if (!bindingIds.containsKey(binding)) {
-                bindingIds.put(binding, "binding:" + ++bindingSequence);
-            }
-            signature.append(bindingIds.get(binding)).append(':').append(binding.getKeyCode())
-                    .append(':').append(binding.getKeyModifier()).append(':').append(binding.getKeyConflictContext())
-                    .append(':').append(binding.getKeyDescription())
-                    .append(':').append(binding.getKeyCategory()).append(';');
-        }
-        if (!bindingSignature.equals(signature.toString())) {
-            bindingSignature = signature.toString();
-            bindingVersion++;
-        }
     }
 
     public static boolean matches(JsonObject data, JsonObject arguments) {

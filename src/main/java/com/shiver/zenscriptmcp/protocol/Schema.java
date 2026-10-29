@@ -5,7 +5,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.model.Json;
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /** 只构造和校验当前工具目录实际使用的 JSON Schema 子集。 */
 public final class Schema {
@@ -69,6 +71,10 @@ public final class Schema {
     }
 
     private static void validate(JsonObject schema, JsonElement value, String path) {
+        // expected 接受任意 JSON 值；外层请求体预算仍限制其大小。
+        if (schema.entrySet().isEmpty()) {
+            return;
+        }
         if (schema.has("oneOf")) {
             int matches = 0;
             for (JsonElement alternative : schema.getAsJsonArray("oneOf")) {
@@ -184,8 +190,15 @@ public final class Schema {
         if (!value.isJsonArray() || value.getAsJsonArray().size() > schema.get("maxItems").getAsInt()) {
             throw invalidParameter(path);
         }
+        if (schema.has("minItems") && value.getAsJsonArray().size() < schema.get("minItems").getAsInt()) {
+            throw invalidParameter(path);
+        }
+        Set<JsonElement> unique = new HashSet<>();
         int index = 0;
         for (JsonElement item : value.getAsJsonArray()) {
+            if (schema.has("uniqueItems") && schema.get("uniqueItems").getAsBoolean() && !unique.add(item)) {
+                throw invalidParameter(path);
+            }
             validate(schema.getAsJsonObject("items"), item, path + "[" + index++ + "]");
         }
     }
