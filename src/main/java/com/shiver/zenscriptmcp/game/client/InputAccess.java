@@ -16,6 +16,15 @@ final class InputAccess {
         return ReflectionHelper.findField(type, names);
     }
 
+    static boolean hasMethod(Class<?> type, String name, Class<?>... parameters) {
+        try {
+            type.getMethod(name, parameters);
+            return true;
+        } catch (NoSuchMethodException exception) {
+            return false;
+        }
+    }
+
     static Object get(Field field, Object owner) {
         try {
             return field.get(owner);

@@ -25,6 +25,12 @@ import org.lwjgl.input.Keyboard;
 public final class GuiInputBridge {
 
     private static final int CHARACTERS_PER_TICK = 32;
+
+    private enum DispatchPath {
+        PRE_EVENT_CANCELLED,
+        GUI_CALLBACK
+    }
+
     private final ScreenReader screens;
     private final SnapshotStore snapshots;
     private GuiScreen dragScreen;
@@ -66,7 +72,7 @@ public final class GuiInputBridge {
         }
     }
 
-    private boolean mouse(GuiScreen screen, int x, int y, int button, boolean down, int wheel) throws IOException {
+    private DispatchPath mouse(GuiScreen screen, int x, int y, int button, boolean down, int wheel) throws IOException {
         requireCoordinates(x, y);
         pointerX = x;
         pointerY = y;
@@ -79,17 +85,18 @@ public final class GuiInputBridge {
             Field handled = InputAccess.field(GuiScreen.class, "mouseHandled");
             InputAccess.set(handled, screen, false);
             if (MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.MouseInputEvent.Pre(screen))) {
-                return false;
+                // 取消只阻止原版回调；模组可能已经消费输入，不能推断为动作拒绝。
+                return DispatchPath.PRE_EVENT_CANCELLED;
             }
             screen.handleMouseInput();
             if (screen == Minecraft.getMinecraft().currentScreen && !(Boolean) InputAccess.get(handled, screen)) {
                 MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.MouseInputEvent.Post(screen));
             }
         }
-        return true;
+        return DispatchPath.GUI_CALLBACK;
     }
 
-    private boolean keyboard(GuiScreen screen, int key, char character, boolean down,
+    private DispatchPath keyboard(GuiScreen screen, int key, char character, boolean down,
             JsonObject request) throws IOException {
         try (NativeInputScope input = new NativeInputScope()) {
             input.keyboard(key, character, down);
@@ -104,14 +111,14 @@ public final class GuiInputBridge {
             Field handled = InputAccess.field(GuiScreen.class, "keyHandled");
             InputAccess.set(handled, screen, false);
             if (MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.KeyboardInputEvent.Pre(screen))) {
-                return false;
+                return DispatchPath.PRE_EVENT_CANCELLED;
             }
             screen.handleKeyboardInput();
             if (screen == Minecraft.getMinecraft().currentScreen && !(Boolean) InputAccess.get(handled, screen)) {
                 MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.KeyboardInputEvent.Post(screen));
             }
         }
-        return true;
+        return DispatchPath.GUI_CALLBACK;
     }
 
     private int rawX(int x) {
@@ -176,6 +183,7 @@ public final class GuiInputBridge {
         private JsonObject result;
         private int step;
         private int textOffset;
+        private int preEventCancelledCount;
         private boolean pressed;
         private long startedTick;
 
@@ -202,48 +210,45 @@ public final class GuiInputBridge {
             if (screen == null) {
                 if ("key".equals(action) && request.get("keyCode").getAsInt() == Keyboard.KEY_ESCAPE) {
                     minecraft.displayInGameMenu();
-                    return finish(true);
+                    return finish();
                 }
                 throw new DomainException("unsupported_capability", "HUD 仅支持 Escape 打开暂停界面");
             }
-            boolean delivered;
             switch (action) {
                 case "click":
                     int button = request.get("button").getAsInt();
                     int x = request.get("x").getAsInt();
                     int y = request.get("y").getAsInt();
-                    delivered = mouse(screen, x, y, button, true, 0);
-                    if (delivered && minecraft.currentScreen == screen) {
-                        mouse(screen, x, y, button, false, 0);
+                    recordDispatch(mouse(screen, x, y, button, true, 0));
+                    if (minecraft.currentScreen == screen) {
+                        recordDispatch(mouse(screen, x, y, button, false, 0));
                     }
-                    return finish(delivered);
+                    return finish();
                 case "scroll":
-                    delivered = mouse(screen, request.get("x").getAsInt(), request.get("y").getAsInt(),
-                            -1, false, request.get("delta").getAsInt());
-                    return finish(delivered);
+                    recordDispatch(mouse(screen, request.get("x").getAsInt(), request.get("y").getAsInt(),
+                            -1, false, request.get("delta").getAsInt()));
+                    return finish();
                 case "drag":
                     return drag();
                 case "text":
                     String text = request.get("text").getAsString();
                     int end = Math.min(text.length(), textOffset + CHARACTERS_PER_TICK);
                     while (textOffset < end) {
-                        if (!keyboard(screen, 0, text.charAt(textOffset++), true, Json.object())) {
-                            return finish(false);
-                        }
+                        recordDispatch(keyboard(screen, 0, text.charAt(textOffset++), true, Json.object()));
                         if (minecraft.currentScreen != screen) {
-                            return finish(true);
+                            return finish();
                         }
                     }
-                    result = observe(true);
+                    result = observe();
                     return textOffset >= text.length() ? result : null;
                 case "key":
                 case "close":
                     int key = "close".equals(action) ? Keyboard.KEY_ESCAPE : request.get("keyCode").getAsInt();
-                    delivered = keyboard(screen, key, '\0', true, request);
+                    recordDispatch(keyboard(screen, key, '\0', true, request));
                     if (minecraft.currentScreen == screen) {
-                        keyboard(screen, key, '\0', false, request);
+                        recordDispatch(keyboard(screen, key, '\0', false, request));
                     }
-                    return finish(delivered);
+                    return finish();
                 default:
                     throw new IllegalArgumentException("未知 GUI 输入");
             }
@@ -259,41 +264,40 @@ public final class GuiInputBridge {
                 dragScreenId = screenId;
                 dragButton = request.get("button").getAsInt();
                 pressed = true;
-                if (!mouse(screen, x, y, dragButton, true, 0)) {
-                    return finish(false);
-                }
+                recordDispatch(mouse(screen, x, y, dragButton, true, 0));
             } else if (step < points.size()) {
-                if (!mouse(screen, x, y, -1, false, 0)) {
-                    return finish(false);
-                }
+                recordDispatch(mouse(screen, x, y, -1, false, 0));
             } else {
-                mouse(screen, x, y, dragButton, false, 0);
+                recordDispatch(mouse(screen, x, y, dragButton, false, 0));
                 pressed = false;
                 dragButton = -1;
-                return finish(true);
+                return finish();
             }
             step++;
-            result = observe(true);
+            result = observe();
             return null;
         }
 
-        private JsonObject finish(boolean delivered) {
-            result = observe(delivered);
-            if (!delivered) {
-                throw new DomainException("action_rejected", "Forge GUI 前置事件拒绝输入");
+        private void recordDispatch(DispatchPath path) {
+            if (path == DispatchPath.PRE_EVENT_CANCELLED) {
+                preEventCancelledCount++;
             }
+        }
+
+        private JsonObject finish() {
+            result = observe();
             return result;
         }
 
-        private JsonObject observe(boolean delivered) {
+        private JsonObject observe() {
             screens.update(snapshots.worldEpoch(), tick());
             JsonObject after = screens.dimensions();
             JsonArray text = screen == null ? new JsonArray() : texts(screen);
             boolean changed = !before.get("screenId").equals(after.get("screenId"));
             return Json.object("observation", snapshots.observation("client", startedTick, new JsonArray()),
                     "data", Json.object("before", before, "after", after,
-                    "delivered", delivered, "screenChanged", changed, "focusedText", text,
-                    "confirmation", delivered ? "unconfirmed" : "rejected",
+                    "delivered", true, "screenChanged", changed, "focusedText", text,
+                    "confirmation", "unconfirmed", "preEventCancelledCount", preEventCancelledCount,
                     "coverage", "standard_gui_and_lwjgl2", "textCharactersDispatched", textOffset));
         }
 

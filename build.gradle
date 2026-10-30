@@ -113,6 +113,12 @@ minecraft {
     }
 }
 
+if (propertyBool('is_coremod')) {
+    tasks.named('runClient', JavaExec).configure {
+        jvmArgs "-Dfml.coreMods.load=${propertyString('coremod_plugin_class_name')}"
+    }
+}
+
 repositories {
     maven {
         name 'CleanroomMC Maven'

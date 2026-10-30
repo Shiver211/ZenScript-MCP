@@ -3,6 +3,7 @@ package com.shiver.zenscriptmcp.game.client;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.shiver.zenscriptmcp.game.query.ContainerSlots;
 import com.shiver.zenscriptmcp.game.query.QueryContext;
 import com.shiver.zenscriptmcp.model.DomainException;
 import com.shiver.zenscriptmcp.model.Json;
@@ -171,6 +172,9 @@ final class ContainerActionTask implements JobManager.Task {
     private void requireSlot(int slot) {
         if (slot < 0 || slot >= container.inventorySlots.size()) {
             throw new DomainException("target_missing", "槽位编号不属于当前容器");
+        }
+        if (!ContainerSlots.isVanillaSlot(container, slot)) {
+            throw new DomainException("unsupported_capability", "该槽位不属于原版点击协议，请使用 mc_ui_action");
         }
     }
 

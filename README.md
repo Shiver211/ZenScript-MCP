@@ -10,6 +10,8 @@ HTTP /mcp → 两版协议适配 → 工具目录 → 缓存 / 作业 → 对应
 `mc_inventory`、`mc_container`、`mc_chat` 支持读取与修改分支；`mc_wait` 支持 Tick 和受限只读条件。
 P1、P2 开发客户端基础验收已通过；P2 已实测输入、交互、容器、GUI、合成、命令及存档进出。
 第三方模组按键、真实容器拒绝回包及 Cleanroom 兼容性仍待验收。
+Cleanroom lwjglxx 输入兼容修复已实现并构建，真实游戏测试由用户执行；见 [诊断与修复说明](docs/2026-10-29-cleanroom-input-diagnosis.md)。
+GUI 输入保留 Forge Pre 取消语义；容器槽位区分原版登记槽与客户端显示槽，使用唯一索引。
 参数、示例和覆盖边界见 [P1 实现说明](docs/p1-development.md) 与 [P2 实现说明](docs/p2-development.md)。
 
 ## 构建与运行

@@ -3,6 +3,7 @@ package com.shiver.zenscriptmcp.game.client;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.data.ItemData;
+import com.shiver.zenscriptmcp.game.query.ContainerSlots;
 import com.shiver.zenscriptmcp.game.query.QueryContext;
 import com.shiver.zenscriptmcp.game.query.TargetResolver;
 import com.shiver.zenscriptmcp.game.query.WorldReader;
@@ -39,11 +40,14 @@ final class ActionObservation {
 
     static JsonObject container(EntityPlayer player) {
         JsonArray slots = new JsonArray();
-        for (Slot slot : player.openContainer.inventorySlots) {
-            slots.add(Json.object("slotId", slot.slotNumber, "item", item(slot.getStack())));
+        for (int index = 0; index < player.openContainer.inventorySlots.size(); index++) {
+            if (ContainerSlots.isVanillaSlot(player.openContainer, index)) {
+                Slot slot = player.openContainer.inventorySlots.get(index);
+                slots.add(Json.object("slotId", index, "item", item(slot.getStack())));
+            }
         }
         return Json.object("windowId", player.openContainer.windowId,
-                "class", player.openContainer.getClass().getName(), "slots", slots,
+                "class", player.openContainer.getClass().getName(), "slotScope", "vanilla", "slots", slots,
                 "cursor", item(player.inventory.getItemStack()), "selectedHotbar", player.inventory.currentItem);
     }
 

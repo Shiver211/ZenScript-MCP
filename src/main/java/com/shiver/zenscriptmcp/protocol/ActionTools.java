@@ -130,7 +130,8 @@ public final class ActionTools {
             }
         }
         register("mc_click_slot", "七种原版槽位操作；QUICK_CRAFT 接收槽位序列；-999 只用于 PICKUP 窗口外点击。"
-                + "containerId 必须来自 client 读取，等待服务器事务确认及可用的双端状态。",
+                + "containerId 必须来自 client 读取；显示槽的 vanillaSlotId 不可用，需走 GUI 点击。"
+                + "等待服务器事务确认及可用的双端状态。",
                 Json.object("oneOf", types));
     }
 

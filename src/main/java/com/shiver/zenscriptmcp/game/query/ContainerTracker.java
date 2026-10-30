@@ -59,8 +59,9 @@ public final class ContainerTracker {
         // 修订只取决于实际完整状态，不取决于本次分页或字段投影。
         StringBuilder state = new StringBuilder();
         state.append(player.inventory.currentItem).append(':').append(itemState(player.inventory.getItemStack()));
-        for (Slot slot : container.inventorySlots) {
-            state.append('|').append(slot.slotNumber).append(':').append(itemState(slot.getStack()));
+        for (int index = 0; index < container.inventorySlots.size(); index++) {
+            Slot slot = container.inventorySlots.get(index);
+            state.append('|').append(index).append(':').append(itemState(slot.getStack()));
         }
         String serialized = state.toString();
         if (!serialized.equals(identity.lastJson)) {
@@ -111,7 +112,9 @@ public final class ContainerTracker {
         int maximum = Math.min(container.inventorySlots.size(), offset + limit);
         for (int index = offset; index < maximum; index++) {
             Slot slot = container.inventorySlots.get(index);
-            JsonObject data = Json.object("slotId", slot.slotNumber, "inventoryIndex", slot.getSlotIndex(),
+            JsonObject data = Json.object("slotId", index,
+                    "vanillaSlotId", ContainerSlots.isVanillaSlot(container, index) ? index : null,
+                    "inventoryIndex", slot.getSlotIndex(),
                     "inventoryClass", slot.inventory.getClass().getName(),
                     "playerInventoryIndex", slot.inventory == player.inventory ? slot.getSlotIndex() : null,
                     "x", slot.xPos, "y", slot.yPos, "coordinateSpace", "container_relative");

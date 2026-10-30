@@ -2,6 +2,7 @@ package com.shiver.zenscriptmcp.game.client;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.shiver.zenscriptmcp.game.query.ContainerSlots;
 import com.shiver.zenscriptmcp.game.query.ContainerTracker;
 import com.shiver.zenscriptmcp.game.query.QueryContext;
 import com.shiver.zenscriptmcp.model.Json;
@@ -123,7 +124,9 @@ public final class ScreenReader {
         int count = Math.min(gui.inventorySlots.inventorySlots.size(), context.settings().maxLimit);
         for (int index = 0; index < count; index++) {
             Slot slot = gui.inventorySlots.inventorySlots.get(index);
-            result.add(Json.object("slotId", slot.slotNumber, "x", gui.getGuiLeft() + slot.xPos,
+            result.add(Json.object("slotId", index,
+                    "vanillaSlotId", ContainerSlots.isVanillaSlot(gui.inventorySlots, index) ? index : null,
+                    "x", gui.getGuiLeft() + slot.xPos,
                     "y", gui.getGuiTop() + slot.yPos, "width", 16, "height", 16));
         }
         if (count < gui.inventorySlots.inventorySlots.size()) {
