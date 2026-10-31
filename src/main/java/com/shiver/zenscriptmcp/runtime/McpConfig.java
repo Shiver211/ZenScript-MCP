@@ -30,6 +30,7 @@ public final class McpConfig {
     public QuerySettings queries = new QuerySettings();
     public EventSettings events = new EventSettings();
     public ScreenshotSettings screenshots = new ScreenshotSettings();
+    public IntegrationSettings integrations = new IntegrationSettings();
 
     public static McpConfig load(Path gameDirectory) throws IOException {
         Path configPath = gameDirectory.resolve(CONFIG_FILE);
@@ -44,7 +45,8 @@ public final class McpConfig {
         }
 
         if (config == null || config.http == null || config.runtime == null
-                || config.queries == null || config.events == null || config.screenshots == null) {
+                || config.queries == null || config.events == null || config.screenshots == null
+                || config.integrations == null) {
             throw new IOException("MCP 配置不能为空");
         }
 
@@ -167,5 +169,11 @@ public final class McpConfig {
 
         public int maxWidth = 1280;
         public int maxHeight = 720;
+    }
+
+    public static final class IntegrationSettings {
+
+        public boolean crafttweaker = true;
+        public boolean gameStages = true;
     }
 }

@@ -6,6 +6,8 @@ import com.shiver.zenscriptmcp.ZenScriptMcpMod;
 import com.shiver.zenscriptmcp.game.query.ContainerTracker;
 import com.shiver.zenscriptmcp.game.query.EventCollector;
 import com.shiver.zenscriptmcp.game.query.QueryService;
+import com.shiver.zenscriptmcp.integration.IntegrationBootstrap;
+import com.shiver.zenscriptmcp.integration.IntegrationRegistry;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.protocol.ActionTools;
 import com.shiver.zenscriptmcp.protocol.McpHttpServer;
@@ -60,6 +62,7 @@ public final class ClientRuntime implements AutoCloseable {
     private final InputController inputs;
     private final GuiInputBridge gui;
     private final TransactionTracker transactions = new TransactionTracker();
+    private final IntegrationRegistry integrations = new IntegrationRegistry();
     private final KeyBinding stopBinding = new KeyBinding("key.zenscriptmcp.stop", Keyboard.KEY_F8,
             "key.categories.zenscriptmcp");
 
@@ -87,13 +90,17 @@ public final class ClientRuntime implements AutoCloseable {
         gui = new GuiInputBridge(screens, snapshots);
         ClientRegistry.registerKeyBinding(stopBinding);
         QueryService queries = new QueryService(snapshots, jobs, executor, config, events, pages, screens,
-                screenshots, clientContainers, serverContainers, bindings);
+                screenshots, clientContainers, serverContainers, bindings, integrations);
         new QueryTools(tools, queries, config).register();
         ActionService actions = new ActionService(snapshots, executor, jobs, config, events, inputs,
                 clientContainers, gui, transactions);
         new ActionTools(tools, actions, queries).register();
         new WaitTools(tools, queries, jobs, snapshots, config).register();
         tools.setContentProvider(screenshots::content);
+        tools.setIntegrationStatus(integrations::status);
+        if (config.enabled) {
+            IntegrationBootstrap.load(integrations, tools, gameDirectory, snapshots, jobs, config, events);
+        }
     }
 
     public void start() throws IOException {
@@ -166,6 +173,7 @@ public final class ClientRuntime implements AutoCloseable {
                 "source", "server",
                 "available", true,
                 "worldAvailable", true,
+                "worldName", server.getFolderName(),
                 "tick", ++serverTicks,
                 "heartbeatAt", Instant.now().toString());
 
@@ -203,6 +211,7 @@ public final class ClientRuntime implements AutoCloseable {
         }
         transactions.close();
         screenshots.close();
+        integrations.close();
 
         if (httpServer != null) {
             httpServer.close();

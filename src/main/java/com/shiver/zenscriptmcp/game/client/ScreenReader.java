@@ -71,7 +71,7 @@ public final class ScreenReader {
         JsonObject data = dimensions();
         data.addProperty("class", screen == null ? "hud" : screen.getClass().getName());
         data.addProperty("open", screen != null);
-        context.checkFields(arguments, "buttons", "slots", "title");
+        context.checkFields(arguments, "buttons", "slots", "title", "extensions");
         context.field(data, arguments, "buttons", () -> buttons(context));
         if (screen != null) {
             context.missing("custom_drawn_regions");

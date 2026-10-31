@@ -14,6 +14,7 @@ import org.apache.logging.log4j.Logger;
         modid = Tags.MOD_ID,
         name = Tags.MOD_NAME,
         version = Tags.VERSION,
+        dependencies = "after:crafttweaker;after:zenutils",
         acceptableRemoteVersions = "*",
         clientSideOnly = true)
 public final class ZenScriptMcpMod {

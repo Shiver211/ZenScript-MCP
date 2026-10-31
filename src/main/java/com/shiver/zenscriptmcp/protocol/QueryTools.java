@@ -119,7 +119,7 @@ public final class QueryTools {
         register("mc_nbt", "读取实际目标序列化 NBT；path 为 compound 键/list 下标数组；long 使用十进制字符串。", nbt, "target");
         JsonObject recipes = paged();
         filters(recipes);
-        recipes.add("system", Schema.enumeration("systems", "minecraft:crafting", "minecraft:smelting"));
+        recipes.add("system", Schema.string());
         recipes.add("recipeId", Schema.string());
         recipes.add("output", Schema.string());
         register("mc_recipes", "列出已支持配方系统或注册声明；不执行动态匹配及合成回调。", recipes);

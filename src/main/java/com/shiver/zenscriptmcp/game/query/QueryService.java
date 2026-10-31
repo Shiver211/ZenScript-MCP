@@ -7,6 +7,7 @@ import com.shiver.zenscriptmcp.data.NbtReader;
 import com.shiver.zenscriptmcp.game.client.BindingRegistry;
 import com.shiver.zenscriptmcp.game.client.ScreenReader;
 import com.shiver.zenscriptmcp.game.client.ScreenshotService;
+import com.shiver.zenscriptmcp.integration.IntegrationRegistry;
 import com.shiver.zenscriptmcp.model.DomainException;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.runtime.EventBuffer;
@@ -18,6 +19,7 @@ import com.shiver.zenscriptmcp.runtime.SnapshotStore;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityList;
 import net.minecraft.entity.player.EntityPlayer;
@@ -39,10 +41,12 @@ public final class QueryService {
     private final ScreenshotService screenshots;
     private final ContainerTracker clientContainers;
     private final ContainerTracker serverContainers;
+    private final IntegrationRegistry integrations;
 
     public QueryService(SnapshotStore snapshots, JobManager jobs, GameExecutor executor, McpConfig config,
             EventBuffer events, PageStore pages, ScreenReader screens, ScreenshotService screenshots,
-            ContainerTracker clientContainers, ContainerTracker serverContainers, BindingRegistry bindings) {
+            ContainerTracker clientContainers, ContainerTracker serverContainers, BindingRegistry bindings,
+            IntegrationRegistry integrations) {
         this.snapshots = snapshots;
         this.jobs = jobs;
         this.executor = executor;
@@ -53,6 +57,7 @@ public final class QueryService {
         this.screenshots = screenshots;
         this.clientContainers = clientContainers;
         this.serverContainers = serverContainers;
+        this.integrations = integrations;
         catalog = new CatalogReader(snapshots, bindings);
     }
 
@@ -93,7 +98,12 @@ public final class QueryService {
             case "mc_entities":
                 return entityTask(context, arguments);
             case "mc_recipes":
-                return RecipeReader.task(context, arguments, pages);
+                String system = QueryContext.string(arguments, "system", "systems");
+                if ("systems".equals(system) || "minecraft:crafting".equals(system)
+                        || "minecraft:smelting".equals(system)) {
+                    return RecipeReader.task(context, arguments, pages, integrations.recipeSystems());
+                }
+                return integrations.recipes(context, arguments, pages);
             case "mc_commands":
                 return CommandReader.task(context, arguments, pages);
             case "mc_screenshot":
@@ -122,9 +132,17 @@ public final class QueryService {
             case "mc_raycast":
                 return WorldReader.raycast(context, arguments);
             case "mc_screen":
-                return screens.inspect(context, arguments, clientContainers);
+                JsonObject screen = screens.inspect(context, arguments, clientContainers);
+                if (QueryContext.wants(arguments, "extensions")) {
+                    screen.add("extensions", integrations.readScreen(context,
+                            Minecraft.getMinecraft().currentScreen, arguments));
+                }
+                return screen;
             case "mc_capabilities":
-                return CapabilityReader.read(context, provider(context, arguments), arguments);
+                ICapabilityProvider targetProvider = provider(context, arguments);
+                JsonObject capabilities = CapabilityReader.read(context, targetProvider, arguments);
+                capabilities.add("extensions", integrations.readTarget(context, targetProvider, arguments));
+                return capabilities;
             case "mc_nbt":
                 JsonObject result = new NbtReader(config.queries).read(
                         TargetResolver.nbt(provider(context, arguments)), arguments);

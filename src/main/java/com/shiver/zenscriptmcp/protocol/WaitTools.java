@@ -58,10 +58,13 @@ public final class WaitTools {
                 "timeoutMs", Schema.integer(1, 300_000)), "conditions");
         tools.replace("mc_wait", "按实际 client/server Tick 等待，或等待只读条件全部满足；不占修改权限。"
                 + "条件 path 使用 JSON Pointer；不完整观察不会推断缺失值。",
-                Schema.oneOf(ticks, wait), true, this::submit);
+                Schema.oneOf(ticks, wait), true, arguments -> submit("mc_wait", arguments));
+        tools.register("mc_assert", "只采样一轮只读条件，返回 passed/failed/inconclusive 与各项观察。"
+                + "作业成功只表示断言已执行，测试结论必须读取 data.outcome。",
+                wait, true, arguments -> submit("mc_assert", arguments));
     }
 
-    private JsonObject submit(JsonObject arguments) {
+    private JsonObject submit(String tool, JsonObject arguments) {
         boolean conditions = arguments.has("conditions");
         String sideName = conditions ? "client" : arguments.get("side").getAsString();
         JsonObject sideState = snapshots.status().getAsJsonObject(sideName);
@@ -85,21 +88,25 @@ public final class WaitTools {
                 : config.runtime.defaultTimeoutMillis;
         GameExecutor.Side side = "server".equals(sideName) ? GameExecutor.Side.SERVER : GameExecutor.Side.CLIENT;
         boolean worldBound = sideState.has("worldAvailable") && sideState.get("worldAvailable").getAsBoolean();
-        return jobs.submit("mc_wait", arguments, side, false, worldBound, timeout, null,
-                conditions ? new ConditionsTask(arguments) : new TicksTask(arguments, sideName));
+        return jobs.submit(tool, arguments, side, false, worldBound, timeout, null,
+                conditions ? new ConditionsTask(arguments, "mc_assert".equals(tool))
+                        : new TicksTask(arguments, sideName));
     }
 
     private final class ConditionsTask implements JobManager.Task {
 
         private final JsonArray conditions;
+        private final boolean singlePass;
         private JsonArray observations = new JsonArray();
         private JsonObject result;
         private int index;
         private boolean matched = true;
+        private boolean unmatched;
         private String childId;
 
-        private ConditionsTask(JsonObject arguments) {
+        private ConditionsTask(JsonObject arguments, boolean singlePass) {
             conditions = arguments.getAsJsonArray("conditions");
+            this.singlePass = singlePass;
         }
 
         @Override
@@ -132,17 +139,28 @@ public final class WaitTools {
             }
             observations.add(Json.object("conditionIndex", index, "match", match, "observation", observation));
             matched &= "matched".equals(match);
+            unmatched |= "unmatched".equals(match);
             result = Json.object("data", Json.object("matched", matched && index == conditions.size() - 1,
                     "observations", observations, "atomic", false));
             childId = null;
             if (++index < conditions.size()) {
                 return null;
             }
-            if (matched) {
+            if (singlePass) {
+                String outcome = "inconclusive";
+                if (unmatched) {
+                    outcome = "failed";
+                } else if (matched) {
+                    outcome = "passed";
+                }
+                result.getAsJsonObject("data").addProperty("outcome", outcome);
+            }
+            if (matched || singlePass) {
                 return result;
             }
             index = 0;
             matched = true;
+            unmatched = false;
             observations = new JsonArray();
             return null;
         }

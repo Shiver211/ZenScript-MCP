@@ -1,6 +1,7 @@
 package com.shiver.zenscriptmcp.game.query;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.data.ItemData;
 import com.shiver.zenscriptmcp.model.Json;
@@ -27,12 +28,16 @@ public final class RecipeReader {
     private RecipeReader() {
     }
 
-    public static JobManager.Task task(QueryContext context, JsonObject arguments, PageStore pages) {
+    public static JobManager.Task task(QueryContext context, JsonObject arguments, PageStore pages,
+            JsonArray extensions) {
         String system = QueryContext.string(arguments, "system", "systems");
         List<JsonObject> systems = new ArrayList<>();
         if ("systems".equals(system)) {
             systems.add(Json.object("id", "minecraft:crafting", "name", "工作台", "coverage", "registered_declarations"));
             systems.add(Json.object("id", "minecraft:smelting", "name", "熔炉", "coverage", "registered_declarations"));
+            for (JsonElement extension : extensions) {
+                systems.add(extension.getAsJsonObject());
+            }
             return new ListQueryTask<>("mc_recipes", context, arguments, systems.iterator(), row -> row,
                     pages, false, Json.object("system", system, "privateSystemsDiscovered", false));
         }

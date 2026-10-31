@@ -10,9 +10,11 @@ import com.shiver.zenscriptmcp.runtime.GameExecutor;
 import com.shiver.zenscriptmcp.runtime.JobManager;
 import com.shiver.zenscriptmcp.runtime.McpConfig;
 import com.shiver.zenscriptmcp.runtime.SnapshotStore;
+import java.lang.management.ManagementFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /** 保存固定工具定义，校验输入，并将领域结果包装为 MCP 工具结果。 */
 public final class ToolRegistry {
@@ -25,6 +27,7 @@ public final class ToolRegistry {
     private final JobManager jobs;
     private final McpConfig config;
     private Function<JsonObject, JsonArray> contentProvider = result -> new JsonArray();
+    private Supplier<JsonObject> integrationStatus = JsonObject::new;
 
     public ToolRegistry(SnapshotStore snapshots, JobManager jobs, McpConfig config) {
         this.snapshots = snapshots;
@@ -99,12 +102,20 @@ public final class ToolRegistry {
         return Json.copy(tool.definition.getAsJsonObject("inputSchema"));
     }
 
+    public boolean contains(String name) {
+        return tools.containsKey(name);
+    }
+
     public void validate(String name, JsonObject arguments) {
         Schema.validate(inputSchema(name), arguments);
     }
 
     public void setContentProvider(Function<JsonObject, JsonArray> contentProvider) {
         this.contentProvider = contentProvider;
+    }
+
+    public void setIntegrationStatus(Supplier<JsonObject> integrationStatus) {
+        this.integrationStatus = integrationStatus;
     }
 
     public JsonObject call(String name, JsonObject arguments) {
@@ -171,9 +182,10 @@ public final class ToolRegistry {
         JsonObject data = snapshots.status();
         data.add("jobs", jobs.summary());
         data.addProperty("javaVersion", System.getProperty("java.version"));
+        data.addProperty("processId", ManagementFactory.getRuntimeMXBean().getName().split("@", 2)[0]);
         data.addProperty("modVersion", Tags.VERSION);
         data.add("protocolVersions", Json.GSON.toJsonTree(ProtocolAdapter.SUPPORTED_VERSIONS));
-        data.add("integrations", Json.object());
+        data.add("integrations", integrationStatus.get());
         data.add("queryBudget", Json.GSON.toJsonTree(config.queries));
         data.add("eventBudget", Json.GSON.toJsonTree(config.events));
         data.add("screenshotBudget", Json.GSON.toJsonTree(config.screenshots));
