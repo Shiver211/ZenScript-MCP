@@ -70,29 +70,39 @@ public final class Schema {
         validate(schema, value, "arguments");
     }
 
-    private static void validate(JsonObject schema, JsonElement value, String path) {
+    public static void validate(JsonObject schema, JsonElement value, String path) {
         // expected 接受任意 JSON 值；外层请求体预算仍限制其大小。
         if (schema.entrySet().isEmpty()) {
             return;
         }
         if (schema.has("oneOf")) {
             int matches = 0;
+            IllegalArgumentException failure = null;
+            int failureScore = -1;
             for (JsonElement alternative : schema.getAsJsonArray("oneOf")) {
                 try {
                     validate(alternative.getAsJsonObject(), value, path);
                     matches++;
                 } catch (IllegalArgumentException exception) {
-                    // 只捕获参数不匹配；schema 实现错误继续向上传播。
+                    // 优先报告与已提供字段、动作枚举匹配的分支，保留嵌套参数提示。
+                    int score = branchScore(alternative.getAsJsonObject(), value);
+                    if (score > failureScore) {
+                        failure = exception;
+                        failureScore = score;
+                    }
                 }
             }
+            if (matches == 0 && failure != null) {
+                throw failure;
+            }
             if (matches != 1) {
-                throw invalidParameter(path);
+                throw invalidParameter(path, schema);
             }
             return;
         }
         String type = schema.get("type").getAsString();
         if (value == null || value.isJsonNull()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
 
         switch (type) {
@@ -110,7 +120,7 @@ public final class Schema {
                 break;
             case "boolean":
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) {
-                    throw invalidParameter(path);
+                    throw invalidParameter(path, schema);
                 }
                 break;
             case "array":
@@ -123,9 +133,27 @@ public final class Schema {
         validateEnum(schema, value, path);
     }
 
+    private static int branchScore(JsonObject schema, JsonElement value) {
+        if (value == null || !value.isJsonObject() || !schema.has("properties")) {
+            return 0;
+        }
+        int score = 0;
+        for (Map.Entry<String, JsonElement> property : schema.getAsJsonObject("properties").entrySet()) {
+            JsonElement supplied = value.getAsJsonObject().get(property.getKey());
+            if (supplied != null) {
+                score++;
+                JsonObject constraint = property.getValue().getAsJsonObject();
+                if (constraint.has("enum") && constraint.getAsJsonArray("enum").contains(supplied)) {
+                    score++;
+                }
+            }
+        }
+        return score;
+    }
+
     private static void validateObject(JsonObject schema, JsonElement value, String path) {
         if (!value.isJsonObject()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
 
         JsonObject object = value.getAsJsonObject();
@@ -134,7 +162,7 @@ public final class Schema {
         for (JsonElement required : schema.getAsJsonArray("required")) {
             String propertyName = required.getAsString();
             if (!object.has(propertyName)) {
-                throw invalidParameter(path + "." + propertyName);
+                throw invalidParameter(path + "." + propertyName, schema);
             }
         }
 
@@ -146,7 +174,7 @@ public final class Schema {
                 if (schema.has("additionalProperties") && schema.get("additionalProperties").getAsBoolean()) {
                     continue;
                 }
-                throw invalidParameter(propertyPath);
+                throw invalidParameter(propertyPath, schema);
             }
 
             validate(properties.getAsJsonObject(propertyName), entry.getValue(), propertyPath);
@@ -155,7 +183,7 @@ public final class Schema {
 
     private static void validateString(JsonObject schema, JsonElement value, String path) {
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
 
         int length = value.getAsString().length();
@@ -163,20 +191,20 @@ public final class Schema {
         boolean aboveMaximum = schema.has("maxLength") && length > schema.get("maxLength").getAsInt();
 
         if (belowMinimum || aboveMaximum) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
     }
 
     private static void validateInteger(JsonObject schema, JsonElement value, String path) {
         validateNumber(schema, value, path);
         if (value.getAsBigDecimal().stripTrailingZeros().scale() > 0) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
     }
 
     private static void validateNumber(JsonObject schema, JsonElement value, String path) {
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
 
         BigDecimal number = value.getAsBigDecimal();
@@ -185,22 +213,22 @@ public final class Schema {
         boolean outOfRange = number.compareTo(minimum) < 0 || number.compareTo(maximum) > 0;
 
         if (outOfRange) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
     }
 
     private static void validateArray(JsonObject schema, JsonElement value, String path) {
         if (!value.isJsonArray() || value.getAsJsonArray().size() > schema.get("maxItems").getAsInt()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
         if (schema.has("minItems") && value.getAsJsonArray().size() < schema.get("minItems").getAsInt()) {
-            throw invalidParameter(path);
+            throw invalidParameter(path, schema);
         }
         Set<JsonElement> unique = new HashSet<>();
         int index = 0;
         for (JsonElement item : value.getAsJsonArray()) {
             if (schema.has("uniqueItems") && schema.get("uniqueItems").getAsBoolean() && !unique.add(item)) {
-                throw invalidParameter(path);
+                throw invalidParameter(path, schema);
             }
             validate(schema.getAsJsonObject("items"), item, path + "[" + index++ + "]");
         }
@@ -217,10 +245,26 @@ public final class Schema {
             }
         }
 
-        throw invalidParameter(path);
+        throw invalidParameter(path, schema);
     }
 
-    private static IllegalArgumentException invalidParameter(String path) {
-        return new IllegalArgumentException("参数不符合 schema：" + path);
+    private static IllegalArgumentException invalidParameter(String path, JsonObject schema) {
+        StringBuilder message = new StringBuilder("参数不符合 schema：").append(path);
+        if (schema.has("type")) {
+            message.append("；要求类型 ").append(schema.get("type").getAsString());
+        }
+        if (schema.has("enum")) {
+            message.append("；允许值 ").append(schema.get("enum"));
+        }
+        if (schema.has("minimum") && schema.has("maximum")) {
+            message.append("；范围 ").append(schema.get("minimum")).append("..").append(schema.get("maximum"));
+        }
+        if (schema.has("required") && schema.getAsJsonArray("required").size() > 0) {
+            message.append("；必填字段 ").append(schema.get("required"));
+        }
+        if (schema.has("description")) {
+            message.append("；").append(schema.get("description").getAsString());
+        }
+        return new IllegalArgumentException(message.toString());
     }
 }

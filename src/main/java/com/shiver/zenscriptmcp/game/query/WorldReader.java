@@ -25,6 +25,7 @@ import net.minecraft.world.chunk.Chunk;
 public final class WorldReader {
 
     private static final int MAX_RAY_STEPS = 1024;
+    private static final long DAY_TICKS = 24_000;
 
     private WorldReader() {
     }
@@ -53,8 +54,7 @@ public final class WorldReader {
                 : context.player(Json.object()).getPosition();
         context.checkFields(arguments, "time", "weather", "biome", "light", "spawn", "difficulty");
         JsonObject data = Json.object("dimension", world.provider.getDimension());
-        context.field(data, arguments, "time", () -> Json.object("dayTime", Long.toString(world.getWorldTime()),
-                "totalTime", Long.toString(world.getTotalWorldTime())));
+        context.field(data, arguments, "time", () -> time(world.getWorldTime(), world.getTotalWorldTime()));
         context.field(data, arguments, "weather", () -> Json.object("raining", world.isRaining(),
                 "thundering", world.isThundering(), "rainStrength", world.getRainStrength(1)));
         context.field(data, arguments, "spawn", () -> blockPosition(world.getSpawnPoint()));
@@ -70,6 +70,12 @@ public final class WorldReader {
             context.field(data, arguments, "light", () -> light(chunk, position));
         }
         return data;
+    }
+
+    private static JsonObject time(long worldTime, long totalTime) {
+        return Json.object("worldTime", Long.toString(worldTime), "dayTime", Long.toString(worldTime),
+                "daytimeModulo", Math.floorMod(worldTime, DAY_TICKS), "totalTime", Long.toString(totalTime),
+                "unit", "ticks", "dayLength", DAY_TICKS);
     }
 
     public static JsonObject block(QueryContext context, World world, BlockPos position, JsonObject arguments) {

@@ -111,11 +111,13 @@ public final class WaitTools {
     }
 
     private void validateConditions(JsonObject arguments) {
+        int index = 0;
         for (JsonElement value : arguments.getAsJsonArray("conditions")) {
             JsonObject condition = value.getAsJsonObject();
             JsonObject query = condition.getAsJsonObject("query");
             // 目录明确展示公共结构；此处仍严格校验只读分支，禁止借条件执行动作。
-            Schema.validate(querySchemas.get(query.get("tool").getAsString()), query.get("arguments"));
+            Schema.validate(querySchemas.get(query.get("tool").getAsString()), query.get("arguments"),
+                    "arguments.conditions[" + index++ + "].query.arguments");
             ConditionMatcher.resolve(Json.object(), condition.get("path").getAsString());
             String operator = condition.get("operator").getAsString();
             if (!"exists".equals(operator) && !condition.has("expected")) {

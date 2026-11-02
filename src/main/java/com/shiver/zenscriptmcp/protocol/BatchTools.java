@@ -67,7 +67,8 @@ public final class BatchTools {
                 "operationId", Schema.string(), "limit", Schema.integer(1, config.queries.maxLimit)), "steps");
         JsonObject page = Schema.object(Json.object("cursor", Schema.string(),
                 "limit", Schema.integer(1, config.queries.maxLimit)), "cursor");
-        tools.register("mc_batch", "有界混合批量，支持前序结果 $ref；首个失败停止，交换尽力恢复，其他副作用不回滚。",
+        tools.register("mc_batch", "有界混合批量，支持前序结果 $ref；首个失败停止，交换尽力恢复。"
+                + "未确认步骤及整批标记 unverified，仍执行后续步骤以取得证据；其他副作用不回滚。",
                 Schema.oneOf(submit, page), false, this::submit);
     }
 
@@ -193,6 +194,7 @@ public final class BatchTools {
         private final List<String> swapIds = new ArrayList<>();
         private final JsonArray irreversible = new JsonArray();
         private final JsonArray recovered = new JsonArray();
+        private final JsonArray unverifiedSteps = new JsonArray();
         private GameExecutor.Side side = GameExecutor.Side.CLIENT;
         private JobManager.Task active;
         private JsonObject arguments;
@@ -247,7 +249,14 @@ public final class BatchTools {
                 }
                 retainedBytes += bytes;
                 results.put(id, Json.copy(value));
-                completed.add(Json.object("id", id, "tool", tool, "status", "succeeded", "result", value));
+                JsonObject data = value.has("data") ? value.getAsJsonObject("data") : value;
+                boolean unverified = "unconfirmed".equals(QueryContext.string(data, "confirmation", ""))
+                        || "unverified".equals(QueryContext.string(data, "outcome", ""));
+                if (unverified) {
+                    unverifiedSteps.add(id);
+                }
+                completed.add(Json.object("id", id, "tool", tool,
+                        "status", unverified ? "unverified" : "succeeded", "result", value));
                 if ("mc_assert".equals(tool) && !"passed".equals(QueryContext.string(value.getAsJsonObject("data"),
                         "outcome", "inconclusive"))) {
                     throw new DomainException("assertion_failed", "批量断言未通过");
@@ -256,7 +265,7 @@ public final class BatchTools {
                 active = null;
                 index++;
                 if (index == definitions.size()) {
-                    return Json.object("data", Json.object("outcome", "succeeded"));
+                    return Json.object("data", Json.object("outcome", successOutcome()));
                 }
                 return null;
             } catch (Exception exception) {
@@ -313,7 +322,7 @@ public final class BatchTools {
                     recoveryRouted = true;
                     return false;
                 }
-                result = document("succeeded", "not_needed");
+                result = document(successOutcome(), "not_needed");
                 return true;
             }
             if (!finishing) {
@@ -380,6 +389,11 @@ public final class BatchTools {
             return true;
         }
 
+        private String successOutcome() {
+            // 后续断言没有声明与动作的因果关系，不能自动清除前序动作的未验证结论。
+            return unverifiedSteps.size() == 0 ? "succeeded" : "unverified";
+        }
+
         private JsonObject document(String outcome, String recoveryStatus) {
             JsonArray steps = Json.copy(completed);
             for (int skipped = steps.size(); skipped < definitions.size(); skipped++) {
@@ -395,6 +409,7 @@ public final class BatchTools {
             }
             JsonObject document = Json.object("observation", snapshots.observation("client", 0, new JsonArray()),
                     "data", Json.object("outcome", outcome, "steps", steps, "failedStep", failedStep,
+                            "unverifiedSteps", unverifiedSteps,
                             "irreversibleSteps", irreversible, "recovery", Json.object("status", recoveryStatus,
                                     "steps", recovered, "cursorRecovery", cursorRecovery,
                                     "remainingCursor", actions.cursorState(),

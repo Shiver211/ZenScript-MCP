@@ -74,8 +74,12 @@ function Get-ScenarioOutcome {
         return 'failed'
     }
     if ($Result.ContainsKey('data') -and $Result.data.ContainsKey('outcome')) {
-        if ($Result.data.outcome -in @('succeeded', 'swapped')) { return 'passed' }
+        if ($Result.data.outcome -in @('succeeded', 'swapped', 'noop')) { return 'passed' }
+        if ($Result.data.outcome -eq 'unverified') { return 'inconclusive' }
         return $Result.data.outcome
+    }
+    if ($Result.ContainsKey('data') -and $Result.data['confirmation'] -eq 'unconfirmed') {
+        return 'inconclusive'
     }
     return 'passed'
 }

@@ -31,25 +31,28 @@ public final class CapabilityReader {
     public static JsonObject read(QueryContext context, ICapabilityProvider provider, JsonObject arguments) {
         String faceName = QueryContext.string(arguments, "face", "internal");
         EnumFacing face = "internal".equals(faceName) ? null : EnumFacing.byName(faceName);
-        JsonObject result = Json.object("face", faceName);
+        JsonObject result = Json.object("face", faceName, "providerAvailable", provider != null);
         JsonObject values = new JsonObject();
         JsonArray supported = new JsonArray();
         JsonArray unsupported = new JsonArray();
+        JsonArray unavailable = new JsonArray();
         JsonArray requested = arguments.has("capabilities") ? arguments.getAsJsonArray("capabilities")
                 : Json.GSON.toJsonTree(STANDARD_CAPABILITIES).getAsJsonArray();
         for (JsonElement entry : requested) {
             String capability = entry.getAsString();
             context.field(values, Json.object(), capability,
-                    () -> readOne(context, provider, face, capability, arguments));
-            if (values.has(capability) && !values.get(capability).isJsonNull()) {
+                    () -> provider == null ? null : readOne(context, provider, face, capability, arguments));
+            if (!values.has(capability)) {
+                unavailable.add(capability);
+            } else if (!values.get(capability).isJsonNull()) {
                 supported.add(capability);
             } else {
                 unsupported.add(capability);
-                context.missing(capability + ":unsupported_or_unavailable");
             }
         }
         result.add("supported", supported);
-        result.add("unavailable", unsupported);
+        result.add("unsupported", unsupported);
+        result.add("unavailable", unavailable);
         result.add("values", values);
         return result;
     }

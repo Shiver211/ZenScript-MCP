@@ -63,6 +63,7 @@ public final class PageStore {
 
     private static boolean isList(String name) {
         return "steps".equals(name) || "items".equals(name) || "slots".equals(name) || "widgets".equals(name)
+                || "worlds".equals(name)
                 || "added".equals(name) || "changed".equals(name) || "removed".equals(name)
                 || "enchantments".equals(name) || "attributes".equals(name) || "oreDictionary".equals(name)
                 || "buttons".equals(name) || "tanks".equals(name) || "value".equals(name);

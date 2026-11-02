@@ -39,6 +39,7 @@ final class ContainerActionTask implements JobManager.Task {
     private JsonObject result;
     private PeerObservation peer;
     private Container container;
+    private String beforeContainerId;
     private long dispatchedTick = -1;
     private boolean dragging;
 
@@ -58,6 +59,8 @@ final class ContainerActionTask implements JobManager.Task {
                 container = player.openContainer;
                 validate(player);
                 before = context.result(ActionObservation.container(player));
+                service.containers().update(player, context.epoch(), service.tick());
+                beforeContainerId = service.containers().currentId();
                 checkSize(before);
                 if (service.serverAvailable()) {
                     peer = service.peer(Json.object(), true);
@@ -245,8 +248,13 @@ final class ContainerActionTask implements JobManager.Task {
         for (String key : transactions) {
             acknowledgements.add(Json.object("transaction", key, "accepted", service.transactions().confirmation(key)));
         }
-        return context.result(Json.object("before", before,
-                "after", context.result(ActionObservation.container(player)),
+        service.containers().update(player, context.epoch(), service.tick());
+        JsonObject beforeEvidence = Json.copy(before);
+        beforeEvidence.getAsJsonObject("data").addProperty("containerId", beforeContainerId);
+        JsonObject after = ActionObservation.container(player);
+        after.addProperty("containerId", service.containers().currentId());
+        return context.result(Json.object("before", beforeEvidence,
+                "after", context.result(after),
                 "serverBefore", serverBefore, "serverAfter", serverAfter,
                 "transactions", acknowledgements, "confirmation", confirmation,
                 "confirmationScope", confirmationScope(),

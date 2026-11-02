@@ -16,7 +16,10 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.FurnaceRecipes;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.Ingredient;
+import net.minecraft.item.crafting.ShapelessRecipes;
+import net.minecraftforge.common.crafting.IShapedRecipe;
 import net.minecraftforge.fml.common.registry.ForgeRegistries;
+import net.minecraftforge.oredict.ShapelessOreRecipe;
 
 /** 只描述注册信息，不调用 matches/getCraftingResult 或消耗材料。 */
 public final class RecipeReader {
@@ -30,7 +33,7 @@ public final class RecipeReader {
 
     public static JobManager.Task task(QueryContext context, JsonObject arguments, PageStore pages,
             JsonArray extensions) {
-        String system = QueryContext.string(arguments, "system", "systems");
+        String system = system(arguments);
         List<JsonObject> systems = new ArrayList<>();
         if ("systems".equals(system)) {
             systems.add(Json.object("id", "minecraft:crafting", "name", "工作台", "coverage", "registered_declarations"));
@@ -48,20 +51,37 @@ public final class RecipeReader {
             FurnaceRecipes.instance().getSmeltingList().entrySet().forEach(entries::add);
         }
         return new ListQueryTask<>("mc_recipes", context, arguments, entries.iterator(), entry -> {
-            JsonObject readFields = arguments.has("query") || arguments.has("output") ? Json.object() : arguments;
-            JsonObject data = entry instanceof IRecipe ? crafting(context, (IRecipe) entry, readFields)
-                    : smelting(context, entry, readFields);
+            // 先按轻量输出信息筛选，避免无关配方的原料展开拖慢查询并污染覆盖结论。
+            JsonObject candidate = candidate(entry);
             String output = QueryContext.string(arguments, "output", "");
             String recipeId = QueryContext.string(arguments, "recipeId", "");
-            boolean outputMatches = output.isEmpty() || (data.has("output")
-                    && data.getAsJsonObject("output").has("registryName")
-                    && output.equals(data.getAsJsonObject("output").get("registryName").getAsString()));
-            if (!outputMatches || (!recipeId.isEmpty() && !recipeId.equals(data.get("id").getAsString()))
-                    || !CatalogReader.matches(data, arguments)) {
+            boolean outputMatches = output.isEmpty() || (candidate.getAsJsonObject("output").has("registryName")
+                    && output.equals(candidate.getAsJsonObject("output").get("registryName").getAsString()));
+            if (!outputMatches || (!recipeId.isEmpty() && !recipeId.equals(candidate.get("id").getAsString()))
+                    || !CatalogReader.matches(candidate, arguments)) {
                 return null;
             }
+            JsonObject data = entry instanceof IRecipe ? crafting(context, (IRecipe) entry, arguments)
+                    : smelting(context, entry, arguments);
+            data.addProperty("system", system);
             return CatalogReader.project(context, data, arguments);
         }, pages, false, Json.object("system", system, "coverage", "registered_declarations"));
+    }
+
+    public static String system(JsonObject arguments) {
+        boolean searching = arguments.has("query") || arguments.has("output") || arguments.has("recipeId");
+        return QueryContext.string(arguments, "system", searching ? "minecraft:crafting" : "systems");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static JsonObject candidate(Object entry) {
+        if (entry instanceof IRecipe) {
+            IRecipe recipe = (IRecipe) entry;
+            return Json.object("id", String.valueOf(recipe.getRegistryName()),
+                    "output", ItemData.describe(recipe.getRecipeOutput()));
+        }
+        Map.Entry<ItemStack, ItemStack> recipe = (Map.Entry<ItemStack, ItemStack>) entry;
+        return Json.object("id", smeltingId(recipe.getKey()), "output", ItemData.describe(recipe.getValue()));
     }
 
     private static JsonObject crafting(QueryContext context, IRecipe recipe, JsonObject arguments) {
@@ -70,6 +90,7 @@ public final class RecipeReader {
         context.field(data, arguments, "dynamic", recipe::isDynamic);
         context.field(data, arguments, "group", recipe::getGroup);
         context.field(data, arguments, "output", () -> ItemData.describe(recipe.getRecipeOutput()));
+        context.field(data, arguments, "layout", () -> layout(recipe));
         context.field(data, arguments, "ingredients", () -> ingredients(context, recipe));
         if (data.has("dynamic") && data.get("dynamic").getAsBoolean()) {
             data.addProperty("runtimeResultKnown", false);
@@ -78,10 +99,21 @@ public final class RecipeReader {
         return data;
     }
 
+    private static JsonObject layout(IRecipe recipe) {
+        if (recipe instanceof IShapedRecipe) {
+            IShapedRecipe shaped = (IShapedRecipe) recipe;
+            return Json.object("type", "shaped", "width", shaped.getRecipeWidth(),
+                    "height", shaped.getRecipeHeight(), "coordinateBase", 0);
+        }
+        boolean shapeless = recipe instanceof ShapelessRecipes || recipe instanceof ShapelessOreRecipe;
+        return Json.object("type", shapeless ? "shapeless" : "unknown");
+    }
+
     private static JsonArray ingredients(QueryContext context, IRecipe recipe) {
         JsonArray result = new JsonArray();
         List<Ingredient> ingredients = recipe.getIngredients();
         int count = Math.min(ingredients.size(), MAX_INGREDIENTS);
+        int width = recipe instanceof IShapedRecipe ? ((IShapedRecipe) recipe).getRecipeWidth() : 0;
         for (int index = 0; index < count; index++) {
             ItemStack[] matches = ingredients.get(index).getMatchingStacks();
             JsonArray alternatives = new JsonArray();
@@ -89,8 +121,13 @@ public final class RecipeReader {
             for (int candidate = 0; candidate < maximum; candidate++) {
                 alternatives.add(ItemData.describe(matches[candidate]));
             }
-            result.add(Json.object("alternatives", alternatives,
-                    "total", matches.length, "truncated", maximum < matches.length));
+            JsonObject ingredient = Json.object("index", index, "empty", ingredients.get(index) == Ingredient.EMPTY,
+                    "alternatives", alternatives, "total", matches.length, "truncated", maximum < matches.length);
+            if (width > 0) {
+                ingredient.addProperty("row", index / width);
+                ingredient.addProperty("col", index % width);
+            }
+            result.add(ingredient);
             if (maximum < matches.length) {
                 context.missing("ingredients:alternative_limit");
             }

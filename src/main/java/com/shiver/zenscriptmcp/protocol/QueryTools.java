@@ -104,11 +104,14 @@ public final class QueryTools {
         container.add("includePeer", Schema.bool());
         register("mc_container", "默认客户端当前容器；includePeer 按需附带跨端证据，不以窗口编号推定映射。", container);
         JsonObject screen = common();
+        screen.add("sections", Schema.array(Schema.enumeration("buttons", "slots", "widgets", "worlds"), 4));
+        screen.add("includeEmpty", Schema.bool());
         screen.add("tooltip", Schema.oneOf(
                 Schema.object(Json.object("slotRef", Schema.string()), "slotRef"),
                 Schema.object(Json.object("widgetId", Schema.string()), "widgetId")));
         screen.add("source", Schema.enumeration("client", "auto"));
-        register("mc_screen", "读取 GUI 缩放坐标、screenId、标准按钮和槽位；自绘区域明确标为未知。", screen);
+        register("mc_screen", "读取 GUI、控件和世界选择列表；sections 可选 buttons/slots/widgets/worlds。"
+                + "summary 的 slots 省略空槽，includeEmpty=true 或 full 读取全部；自绘区域标为未知。", screen);
     }
 
     private void data() {
@@ -143,7 +146,8 @@ public final class QueryTools {
         recipes.add("system", Schema.string());
         recipes.add("recipeId", Schema.string());
         recipes.add("output", Schema.string());
-        register("mc_recipes", "列出已支持配方系统或注册声明；不执行动态匹配及合成回调。", recipes);
+        register("mc_recipes", "无筛选时列配方系统；query/output/recipeId 默认搜索工作台，query 匹配配方 ID 或输出名称。"
+                + "有序配方提供 layout.width/height 与 ingredients.row/col（从 0 开始）；支持 waitMs=0..10000。", recipes);
     }
 
     private void events() {

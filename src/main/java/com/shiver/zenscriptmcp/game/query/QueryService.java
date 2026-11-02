@@ -125,7 +125,7 @@ public final class QueryService {
             case "mc_entities":
                 return entityTask(context, arguments);
             case "mc_recipes":
-                String system = QueryContext.string(arguments, "system", "systems");
+                String system = RecipeReader.system(arguments);
                 if ("systems".equals(system) || "minecraft:crafting".equals(system)
                         || "minecraft:smelting".equals(system)) {
                     return RecipeReader.task(context, arguments, pages, integrations.recipeSystems());
@@ -169,9 +169,12 @@ public final class QueryService {
                 }
                 return screen;
             case "mc_capabilities":
-                ICapabilityProvider targetProvider = provider(context, arguments);
+                JsonObject capabilityTarget = arguments.getAsJsonObject("target");
+                ICapabilityProvider targetProvider = "block".equals(capabilityTarget.get("kind").getAsString())
+                        ? TargetResolver.blockProvider(context, capabilityTarget) : provider(context, arguments);
                 JsonObject capabilities = CapabilityReader.read(context, targetProvider, arguments);
-                capabilities.add("extensions", integrations.readTarget(context, targetProvider, arguments));
+                capabilities.add("extensions", targetProvider == null ? Json.object()
+                        : integrations.readTarget(context, targetProvider, arguments));
                 return capabilities;
             case "mc_nbt":
                 JsonObject result = new NbtReader(config.queries).read(

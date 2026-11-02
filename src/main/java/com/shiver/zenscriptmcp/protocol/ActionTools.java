@@ -97,7 +97,7 @@ public final class ActionTools {
         JsonObject swap = timing();
         swap.add("first", Schema.string());
         swap.add("second", Schema.string());
-        register("mc_swap_slots", "使用两个 slotRef 交换；核对实际结果，失败时尽力恢复可识别状态。",
+        register("mc_swap_slots", "使用两个 slotRef 交换；内容相同（含两个空槽）返回 noop。核对结果，失败时尽力恢复。",
                 Schema.object(swap, "first", "second"));
         JsonObject select = action("select_hotbar");
         select.add("index", Schema.integer(0, 8));
@@ -200,7 +200,8 @@ public final class ActionTools {
         JsonObject command = timing();
         command.add("command", text(32767));
         command.add("mode", Schema.enumeration("player", "client", "server_player", "server_console"));
-        register("mc_command", "执行命令：player 保留客户端命令优先级；server_* 需要内置服并保留真实发送者。",
+        register("mc_command", "执行命令：player 保留客户端优先路由；经连接发送返回 outcome=unverified，"
+                + "作业完成不代表命令成功。server_* 在内置服取得同步反馈并保留真实发送者。",
                 Schema.object(command, "command"));
         JsonObject send = action("send");
         send.add("text", text(256));

@@ -47,7 +47,8 @@ final class CommandTask implements JobManager.Task {
             throw new IllegalArgumentException("聊天和命令必须是非空单行文本");
         }
         data = Json.object("mode", mode, "messageCursorStart", cursor,
-                "messageAttribution", "time_window_not_causality", "confirmation", "unconfirmed");
+                "messageAttribution", "time_window_not_causality", "confirmation", "unconfirmed",
+                "outcome", "unverified");
         if (mode.startsWith("server_")) {
             MinecraftServer server = context.server();
             ICommandSender sender = "server_console".equals(mode) ? server : context.player(Json.object());
@@ -78,6 +79,7 @@ final class CommandTask implements JobManager.Task {
                     fail("command_failed", "客户端命令未成功处理");
                 }
                 data.addProperty("confirmation", "observed");
+                data.addProperty("outcome", "succeeded");
                 data.addProperty("confirmationScope", "client_handler_return");
             } else {
                 if (text.length() > 256) {
@@ -87,6 +89,7 @@ final class CommandTask implements JobManager.Task {
                 data.addProperty("route", "server_via_player_connection");
                 data.addProperty("executionState", "sent");
                 data.addProperty("serverReturnAvailable", false);
+                data.addProperty("verificationRequired", true);
             }
         }
         result = context.result(data);
@@ -109,6 +112,7 @@ final class CommandTask implements JobManager.Task {
             fail(command != null && !permitted ? "permission_denied" : "command_failed", "服务端命令执行失败");
         }
         data.addProperty("confirmation", "observed");
+        data.addProperty("outcome", "succeeded");
         data.addProperty("confirmationScope", "synchronous_command_return");
     }
 
@@ -137,6 +141,7 @@ final class CommandTask implements JobManager.Task {
         data.addProperty("messageCursorEnd", service.events().cursor());
         data.add("messages", service.events().read(Json.object("cursor", cursor), false, 100));
         data.addProperty("confirmation", "rejected");
+        data.addProperty("outcome", "failed");
         result = context.result(data);
         throw new DomainException(code, message, "command", Json.object("feedback", data.get("feedback"),
                 "route", data.get("route")));

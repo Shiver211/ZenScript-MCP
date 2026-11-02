@@ -18,7 +18,9 @@ public final class ResultView {
             "observation", "pagination", "coverage", "unavailable", "truncated", "scanTruncated",
             "cursorGap", "nextCursor", "total", "offset", "revision", "source", "worldEpoch", "instanceId",
             "error", "fieldErrors", "collectionComplete", "recovery", "imageAvailable", "expiresAt",
-            "actionable", "actionTarget", "unmappedReason", "hit",
+            "actionable", "actionTarget", "unmappedReason", "hit", "unverifiedSteps", "verificationRequired",
+            "containerChanged", "slotComparison", "containerTransition",
+            "emptySlotsIncluded", "supported", "unsupported", "providerAvailable",
             "empty", "containerSlotIndex", "playerInventoryIndex", "protocolSlotNumber"));
 
     private ResultView() {
@@ -110,7 +112,17 @@ public final class ResultView {
                 Set<String> keys = new LinkedHashSet<>();
                 before.entrySet().forEach(entry -> keys.add(entry.getKey()));
                 after.entrySet().forEach(entry -> keys.add(entry.getKey()));
+                boolean containerChanged = containerChanged(before, after);
+                if (containerChanged) {
+                    data.addProperty("containerChanged", true);
+                    data.addProperty("slotComparison", "not_comparable");
+                    data.add("containerTransition", Json.object("before", containerIdentity(before),
+                            "after", containerIdentity(after)));
+                }
                 for (String key : keys) {
+                    if (containerChanged && "slots".equals(key)) {
+                        continue;
+                    }
                     if (!Objects.equals(before.get(key), after.get(key))) {
                         changes.add(key, change(before.get(key), after.get(key)));
                     }
@@ -122,6 +134,28 @@ public final class ResultView {
             data.remove("serverBefore");
             data.remove("serverAfter");
         }
+    }
+
+    private static boolean containerChanged(JsonObject before, JsonObject after) {
+        if (!before.has("slots") || !after.has("slots")) {
+            return false;
+        }
+        for (String key : Arrays.asList("containerId", "windowId", "class", "containerClass")) {
+            if (!Objects.equals(before.get(key), after.get(key))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static JsonObject containerIdentity(JsonObject value) {
+        JsonObject identity = new JsonObject();
+        for (String key : Arrays.asList("containerId", "windowId", "class", "containerClass")) {
+            if (value.has(key)) {
+                identity.add(key, value.get(key));
+            }
+        }
+        return identity;
     }
 
     private static JsonElement change(JsonElement before, JsonElement after) {

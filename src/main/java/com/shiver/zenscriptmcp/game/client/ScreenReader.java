@@ -1,6 +1,7 @@
 package com.shiver.zenscriptmcp.game.client;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.data.ItemInspector;
 import com.shiver.zenscriptmcp.game.query.ContainerTracker;
@@ -17,6 +18,7 @@ import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiWorldSelection;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.gui.inventory.GuiContainer;
 import net.minecraft.inventory.Slot;
@@ -84,14 +86,17 @@ public final class ScreenReader {
         JsonObject data = dimensions();
         data.addProperty("class", screen == null ? "hud" : screen.getClass().getName());
         data.addProperty("open", screen != null);
-        context.checkFields(arguments, "buttons", "slots", "title", "widgets", "tooltip", "extensions");
-        context.field(data, arguments, "buttons", () -> buttons(context));
+        context.checkFields(arguments, "buttons", "slots", "title", "widgets", "worlds", "tooltip", "extensions");
+        if (section(arguments, "buttons")) {
+            context.field(data, arguments, "buttons", () -> buttons(context));
+        }
         if (screen != null) {
             context.missing("custom_drawn_regions");
             if (QueryContext.wants(arguments, "title")) {
                 context.missing("title:not_exposed");
             }
-            if (initializedScreen != screen && QueryContext.wants(arguments, "buttons")) {
+            if (initializedScreen != screen && section(arguments, "buttons")
+                    && QueryContext.wants(arguments, "buttons")) {
                 context.missing("buttons:init_not_observed");
             }
         }
@@ -103,9 +108,18 @@ public final class ScreenReader {
             }
             data.add("containerBounds", Json.object("x", gui.getGuiLeft(), "y", gui.getGuiTop(),
                     "width", gui.getXSize(), "height", gui.getYSize()));
-            context.field(data, arguments, "slots", () -> slots(context, gui, containers));
+            if (section(arguments, "slots")) {
+                context.field(data, arguments, "slots", () -> slots(context, gui, containers, arguments));
+                data.addProperty("emptySlotsIncluded", includeEmpty(arguments));
+            }
         }
-        context.field(data, arguments, "widgets", () -> widgets(context, containers));
+        if (section(arguments, "widgets")) {
+            context.field(data, arguments, "widgets", () -> widgets(context, containers));
+        }
+        if (screen instanceof GuiWorldSelection && section(arguments, "worlds")) {
+            context.field(data, arguments, "worlds",
+                    () -> WorldSelectionReader.read((GuiWorldSelection) screen, screenId, context));
+        }
         if (arguments.has("tooltip")) {
             JsonObject target = arguments.getAsJsonObject("tooltip");
             if (target.has("slotRef")) {
@@ -209,13 +223,33 @@ public final class ScreenReader {
         return result;
     }
 
-    private JsonArray slots(QueryContext context, GuiContainer gui, ContainerTracker containers) {
+    private static boolean section(JsonObject arguments, String name) {
+        if (!arguments.has("sections")) {
+            return true;
+        }
+        for (JsonElement section : arguments.getAsJsonArray("sections")) {
+            if (name.equals(section.getAsString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean includeEmpty(JsonObject arguments) {
+        return arguments.has("includeEmpty") ? arguments.get("includeEmpty").getAsBoolean()
+                : "full".equals(QueryContext.string(arguments, "view", "summary"));
+    }
+
+    private JsonArray slots(QueryContext context, GuiContainer gui, ContainerTracker containers, JsonObject arguments) {
         JsonArray result = new JsonArray();
         if (Minecraft.getMinecraft().player == null) {
             return result;
         }
         for (int index = 0; index < gui.inventorySlots.inventorySlots.size(); index++) {
             Slot slot = gui.inventorySlots.inventorySlots.get(index);
+            if (slot.getStack().isEmpty() && !includeEmpty(arguments)) {
+                continue;
+            }
             JsonObject data = containers.describeSlot(context, context.player(Json.object()), false, index);
             data.addProperty("x", gui.getGuiLeft() + slot.xPos);
             data.addProperty("y", gui.getGuiTop() + slot.yPos);

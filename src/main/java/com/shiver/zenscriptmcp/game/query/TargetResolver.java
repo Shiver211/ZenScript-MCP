@@ -34,9 +34,7 @@ public final class TargetResolver {
         String kind = target.get("kind").getAsString();
         switch (kind) {
             case "block":
-                World world = context.world(target);
-                BlockPos position = WorldReader.blockPosition(target.getAsJsonObject("position"));
-                TileEntity tile = WorldReader.requireChunk(world, position).getTileEntityMap().get(position);
+                TileEntity tile = blockProvider(context, target);
                 if (tile == null) {
                     throw new DomainException("unsupported_capability", "该方块没有已存在的 TileEntity 数据提供者");
                 }
@@ -54,6 +52,13 @@ public final class TargetResolver {
             default:
                 throw new DomainException("invalid_target", "未知目标类型");
         }
+    }
+
+    public static TileEntity blockProvider(QueryContext context, JsonObject target) {
+        checkEpoch(context, target);
+        World world = context.world(target);
+        BlockPos position = WorldReader.blockPosition(target.getAsJsonObject("position"));
+        return WorldReader.requireChunk(world, position).getTileEntityMap().get(position);
     }
 
     public static NBTTagCompound nbt(ICapabilityProvider provider) {

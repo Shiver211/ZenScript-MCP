@@ -51,7 +51,7 @@ public final class SwapSlotsTask implements JobManager.Task {
         }
         validateReferences();
         if (completedClicks == clicks.size()) {
-            result = evidence("swapped");
+            result = evidence(clicks.isEmpty() ? "noop" : "swapped");
             return result;
         }
         if (advanceClick(completedClicks, false)) {

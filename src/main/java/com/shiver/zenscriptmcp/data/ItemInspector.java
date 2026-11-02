@@ -45,10 +45,7 @@ public final class ItemInspector {
         }
         JsonObject errors = new JsonObject();
         read(context, arguments, result, errors, "item", () -> ItemData.describe(stack));
-        read(context, arguments, result, errors, "durability", () -> Json.object(
-                "damageable", stack.isItemStackDamageable(),
-                "damage", stack.getItemDamage(), "maximum", stack.getMaxDamage(),
-                "remaining", Math.max(0, stack.getMaxDamage() - stack.getItemDamage())));
+        read(context, arguments, result, errors, "durability", () -> durability(stack));
         read(context, arguments, result, errors, "enchantments", () -> enchantments(stack));
         read(context, arguments, result, errors, "attributes", () -> attributes(stack));
         read(context, arguments, result, errors, "oreDictionary", () -> ores(stack));
@@ -73,6 +70,14 @@ public final class ItemInspector {
             errors.add(field, Json.object("code", "field_read_failed", "message", exception.toString(),
                     "stage", "item_inspect", "details", Json.object("field", field)));
         }
+    }
+
+    private static JsonObject durability(ItemStack stack) {
+        boolean damageable = stack.isItemStackDamageable();
+        int damage = damageable ? stack.getItemDamage() : 0;
+        int maximum = damageable ? stack.getMaxDamage() : 0;
+        return Json.object("damageable", damageable, "damage", damage, "maximum", maximum,
+                "remaining", Math.max(0, maximum - damage), "metadataDamage", stack.getItemDamage());
     }
 
     private static JsonArray enchantments(ItemStack stack) {
