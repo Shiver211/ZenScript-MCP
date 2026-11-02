@@ -3,6 +3,7 @@ package com.shiver.zenscriptmcp.game.query;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.data.CapabilityReader;
+import com.shiver.zenscriptmcp.data.ItemInspector;
 import com.shiver.zenscriptmcp.data.NbtReader;
 import com.shiver.zenscriptmcp.game.client.BindingRegistry;
 import com.shiver.zenscriptmcp.game.client.ScreenReader;
@@ -10,6 +11,7 @@ import com.shiver.zenscriptmcp.game.client.ScreenshotService;
 import com.shiver.zenscriptmcp.integration.IntegrationRegistry;
 import com.shiver.zenscriptmcp.model.DomainException;
 import com.shiver.zenscriptmcp.model.Json;
+import com.shiver.zenscriptmcp.protocol.ResultView;
 import com.shiver.zenscriptmcp.runtime.EventBuffer;
 import com.shiver.zenscriptmcp.runtime.GameExecutor;
 import com.shiver.zenscriptmcp.runtime.JobManager;
@@ -62,10 +64,13 @@ public final class QueryService {
     }
 
     public JsonObject submit(String tool, JsonObject arguments) {
+        if (arguments.has("cursor") && arguments.get("cursor").getAsString().startsWith("page:")) {
+            return completed(pages.read(tool, arguments));
+        }
         if ("mc_events".equals(tool) || "mc_chat".equals(tool)) {
-            JsonObject data = events.read(arguments, "mc_chat".equals(tool), config.queries.defaultLimit);
-            return completed(Json.object("data", data,
-                    "observation", snapshots.observation("runtime", 0, new JsonArray())));
+            JsonObject data = events.snapshot(arguments, "mc_chat".equals(tool));
+            return completed(pages.document(tool, arguments, Json.object("data", data,
+                    "observation", snapshots.observation("runtime", 0, new JsonArray())), false));
         }
         if (arguments.has("cursor")) {
             return completed(pages.read(tool, arguments));
@@ -84,6 +89,28 @@ public final class QueryService {
         JsonObject request = Json.copy(arguments);
         JobManager.Task task = new ReadTask(tool, request, side);
         return jobs.submit(tool, request, side, false, worldBound, timeout, null, task);
+    }
+
+    public GameExecutor.Side sideFor(String tool, JsonObject arguments) {
+        if ("mc_events".equals(tool) || "mc_chat".equals(tool) || "mc_image".equals(tool)) {
+            return GameExecutor.Side.CLIENT;
+        }
+        return chooseSide(tool, arguments);
+    }
+
+    public JobManager.Task internalTask(String tool, JsonObject arguments) {
+        JsonObject request = Json.copy(arguments);
+        if (request.has("cursor") && request.get("cursor").getAsString().startsWith("page:")) {
+            return () -> pages.read(tool, request);
+        }
+        if ("mc_events".equals(tool) || "mc_chat".equals(tool)) {
+            return () -> Json.object("data", events.snapshot(request, "mc_chat".equals(tool)),
+                    "observation", snapshots.observation("runtime", 0, new JsonArray()));
+        }
+        if ("mc_image".equals(tool)) {
+            return () -> screenshots.image(request.get("imageId").getAsString());
+        }
+        return new ReadTask(tool, request, chooseSide(tool, request));
     }
 
     private JobManager.Task taskFor(String tool, QueryContext context, JsonObject arguments) {
@@ -108,8 +135,9 @@ public final class QueryService {
                 return CommandReader.task(context, arguments, pages);
             case "mc_screenshot":
                 return screenshots.task(arguments);
+            case "mc_inventory":
             case "mc_container":
-                return new ContainerTask(context, arguments);
+                return new ContainerTask(context, arguments, "mc_inventory".equals(tool));
             default:
                 return () -> context.result(read(tool, context, arguments));
         }
@@ -117,6 +145,8 @@ public final class QueryService {
 
     private JsonObject read(String tool, QueryContext context, JsonObject arguments) {
         switch (tool) {
+            case "mc_item_inspect":
+                return ItemInspector.inspect(context, clientContainers, arguments);
             case "mc_player":
                 return EntityReader.describe(context, context.player(arguments), arguments);
             case "mc_inventory":
@@ -192,7 +222,7 @@ public final class QueryService {
             return QueryContext.string(arguments, "mode", "player").startsWith("server_")
                     ? GameExecutor.Side.SERVER : GameExecutor.Side.CLIENT;
         }
-        boolean clientOnly = "mc_screen".equals(tool) || "mc_screenshot".equals(tool)
+        boolean clientOnly = "mc_item_inspect".equals(tool) || "mc_screen".equals(tool) || "mc_screenshot".equals(tool)
                 || ("mc_catalog".equals(tool) && "keybindings".equals(QueryContext.string(arguments, "kind", "")))
                 || ("mc_raycast".equals(tool) && !arguments.has("start"));
         if (clientOnly) {
@@ -207,11 +237,12 @@ public final class QueryService {
         if (arguments.has("target")) {
             JsonObject target = arguments.getAsJsonObject("target");
             if ("item".equals(QueryContext.string(target, "kind", ""))) {
-                return target.get("containerId").getAsString().contains(":client:")
+                return target.get("slotRef").getAsString().startsWith("slot:client:")
                         ? GameExecutor.Side.CLIENT : GameExecutor.Side.SERVER;
             }
         }
-        if ("mc_catalog".equals(tool) || "mc_recipes".equals(tool)) {
+        if ("mc_catalog".equals(tool) || "mc_recipes".equals(tool)
+                || "mc_inventory".equals(tool) || "mc_container".equals(tool)) {
             return GameExecutor.Side.CLIENT;
         }
         return available(GameExecutor.Side.SERVER) ? GameExecutor.Side.SERVER : GameExecutor.Side.CLIENT;
@@ -219,7 +250,7 @@ public final class QueryService {
 
     private boolean worldBound(String tool, GameExecutor.Side side) {
         if ("mc_catalog".equals(tool) || "mc_recipes".equals(tool)
-                || "mc_screen".equals(tool) || "mc_screenshot".equals(tool)) {
+                || "mc_screen".equals(tool) || "mc_screenshot".equals(tool) || "mc_item_inspect".equals(tool)) {
             return false;
         }
         if ("mc_commands".equals(tool) && side == GameExecutor.Side.CLIENT) {
@@ -245,6 +276,9 @@ public final class QueryService {
     private JsonObject completed(JsonObject observation) {
         JsonObject result = snapshots.result("completed", "data", observation.getAsJsonObject("data"));
         result.add("observation", observation.get("observation"));
+        if (observation.has("pagination")) {
+            result.add("pagination", observation.get("pagination"));
+        }
         return result;
     }
 
@@ -270,6 +304,14 @@ public final class QueryService {
         public JsonObject step() throws Exception {
             long startedNanos = System.nanoTime();
             if (delegate == null) {
+                JsonObject source = snapshots.status().getAsJsonObject(sideName(side));
+                if (!source.has("available") || !source.get("available").getAsBoolean()) {
+                    throw new DomainException("source_unavailable", "读取线程不可用");
+                }
+                if (worldBound(tool, side) && (!source.has("worldAvailable")
+                        || !source.get("worldAvailable").getAsBoolean())) {
+                    throw new DomainException("world_unavailable", "当前没有可读取的世界");
+                }
                 delegate = taskFor(tool, context(side), request);
             }
             JsonObject result = delegate.step();
@@ -282,10 +324,11 @@ public final class QueryService {
                 events.add(sideName(side), tick, "diagnostic", Json.object("tool", tool,
                         "code", "read_budget_exceeded", "elapsedMicros", elapsedNanos / 1000));
             }
-            if (result != null && PageStore.byteSize(Json.GSON.toJson(result)) > config.queries.maxPageBytes) {
-                throw new DomainException("result_too_large", "结果超过预算；请缩小 fields、limit 或 NBT path");
+            if (result != null && request.has("fields") && result.has("data")) {
+                result.add("data", ResultView.project(
+                        result.getAsJsonObject("data"), request.getAsJsonArray("fields")));
             }
-            return result;
+            return result == null ? null : pages.document(tool, request, result, worldBound(tool, side));
         }
 
         @Override
@@ -300,6 +343,7 @@ public final class QueryService {
 
         private final QueryContext context;
         private final JsonObject arguments;
+        private final boolean inventoryOnly;
         private JsonObject primary;
         private JsonObject primaryObservation;
         private boolean submitted;
@@ -307,7 +351,8 @@ public final class QueryService {
         private volatile String peer;
         private volatile String peerError;
 
-        private ContainerTask(QueryContext context, JsonObject arguments) {
+        private ContainerTask(QueryContext context, JsonObject arguments, boolean inventoryOnly) {
+            this.inventoryOnly = inventoryOnly;
             this.context = context;
             this.arguments = arguments;
         }
@@ -317,10 +362,9 @@ public final class QueryService {
             if (!submitted) {
                 submitted = true;
                 EntityPlayer player = context.player(arguments);
-                primary = containers(context).inspect(context, player, false, arguments);
+                primary = containers(context).inspect(context, player, inventoryOnly, arguments);
                 primaryObservation = context.observation();
-                boolean includePeer = arguments.has("includePeer") ? arguments.get("includePeer").getAsBoolean()
-                        : "auto".equals(QueryContext.string(arguments, "source", "auto"));
+                boolean includePeer = arguments.has("includePeer") && arguments.get("includePeer").getAsBoolean();
                 GameExecutor.Side other = "client".equals(context.source())
                         ? GameExecutor.Side.SERVER : GameExecutor.Side.CLIENT;
                 if (!includePeer) {
@@ -331,6 +375,8 @@ public final class QueryService {
                     return result();
                 }
                 JsonObject peerArguments = Json.copy(arguments);
+                peerArguments.remove("sinceSnapshot");
+                peerArguments.remove("view");
                 peerArguments.addProperty("uuid", player.getUniqueID().toString());
                 long epoch = context.epoch();
                 executor.submit(other, () -> readPeer(other, peerArguments, epoch));
@@ -363,7 +409,7 @@ public final class QueryService {
             }
             try {
                 QueryContext other = context(side);
-                JsonObject data = containers(other).inspect(other, other.player(request), false, request);
+                JsonObject data = containers(other).inspect(other, other.player(request), inventoryOnly, request);
                 peer = Json.GSON.toJson(other.result(data));
             } catch (RuntimeException exception) {
                 peerError = exception.toString();

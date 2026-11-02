@@ -170,7 +170,7 @@ public final class QueryContext {
             names.add(field);
         }
         for (JsonElement field : arguments.getAsJsonArray("fields")) {
-            if (!names.contains(field.getAsString())) {
+            if (!names.contains(field.getAsString().split("\\.", 2)[0])) {
                 missing(field.getAsString());
             }
         }
@@ -181,7 +181,7 @@ public final class QueryContext {
             return true;
         }
         for (JsonElement value : arguments.getAsJsonArray("fields")) {
-            if (field.equals(value.getAsString())) {
+            if (field.equals(value.getAsString()) || value.getAsString().startsWith(field + ".")) {
                 return true;
             }
         }

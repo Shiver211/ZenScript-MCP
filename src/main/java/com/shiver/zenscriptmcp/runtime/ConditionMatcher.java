@@ -15,6 +15,10 @@ public final class ConditionMatcher {
         JsonElement actual = resolve(observation, pointer);
         boolean partial = observation.has("observation") && "partial".equals(
                 observation.getAsJsonObject("observation").get("coverage").getAsString());
+        if (observation.has("pagination")) {
+            JsonObject page = observation.getAsJsonObject("pagination");
+            partial |= page.get("hasMore").getAsBoolean() || !page.get("collectionComplete").getAsBoolean();
+        }
         if (actual == null) {
             if (partial || !"exists".equals(operator)) {
                 return "unknown";

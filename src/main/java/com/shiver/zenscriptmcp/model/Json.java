@@ -2,9 +2,11 @@ package com.shiver.zenscriptmcp.model;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.util.Map;
 
 /** 仅使用 Minecraft 自带 Gson 的旧版 API。 */
 public final class Json {
@@ -39,5 +41,28 @@ public final class Json {
 
     public static JsonObject copy(JsonObject object) {
         return parse(GSON.toJson(object));
+    }
+
+    public static JsonArray copy(JsonArray array) {
+        return copy((JsonElement) array).getAsJsonArray();
+    }
+
+    /** Gson 的树反序列化可能直接返回原对象；显式复制可变节点，兼容游戏中的不同 Gson 版本。 */
+    public static JsonElement copy(JsonElement value) {
+        if (value.isJsonObject()) {
+            JsonObject result = new JsonObject();
+            for (Map.Entry<String, JsonElement> entry : value.getAsJsonObject().entrySet()) {
+                result.add(entry.getKey(), copy(entry.getValue()));
+            }
+            return result;
+        }
+        if (value.isJsonArray()) {
+            JsonArray result = new JsonArray();
+            for (JsonElement element : value.getAsJsonArray()) {
+                result.add(copy(element));
+            }
+            return result;
+        }
+        return value;
     }
 }

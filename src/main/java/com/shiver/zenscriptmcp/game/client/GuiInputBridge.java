@@ -82,6 +82,7 @@ public final class GuiInputBridge {
             if (button >= 0 && !down) {
                 input.keyDown(button - 100, false);
             }
+            screens.preparePointer(x, y, null);
             Field handled = InputAccess.field(GuiScreen.class, "mouseHandled");
             InputAccess.set(handled, screen, false);
             if (MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.MouseInputEvent.Pre(screen))) {
@@ -189,7 +190,8 @@ public final class GuiInputBridge {
 
         private GuiTask(JsonObject request) {
             this.request = request;
-            screenId = request.get("screenId").getAsString();
+            screenId = request.has("screenId") ? request.get("screenId").getAsString()
+                    : screens.dimensions().get("screenId").getAsString();
             action = request.get("action").getAsString();
         }
 
@@ -213,6 +215,18 @@ public final class GuiInputBridge {
                     return finish();
                 }
                 throw new DomainException("unsupported_capability", "HUD 仅支持 Escape 打开暂停界面");
+            }
+            if (request.has("widgetId")) {
+                JsonObject target = screens.widgetTarget(request.get("widgetId").getAsString());
+                request.add("x", target.get("x"));
+                request.add("y", target.get("y"));
+                screens.preparePointer(target.get("x").getAsInt(), target.get("y").getAsInt(),
+                        request.get("widgetId").getAsString());
+                if (("text".equals(action) || "key".equals(action)) && step == 0) {
+                    recordDispatch(mouse(screen, target.get("x").getAsInt(), target.get("y").getAsInt(), 0, true, 0));
+                    recordDispatch(mouse(screen, target.get("x").getAsInt(), target.get("y").getAsInt(), 0, false, 0));
+                    step++;
+                }
             }
             switch (action) {
                 case "click":

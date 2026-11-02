@@ -9,10 +9,12 @@ import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.runtime.GameExecutor;
 import com.shiver.zenscriptmcp.runtime.JobManager;
 import com.shiver.zenscriptmcp.runtime.McpConfig;
+import com.shiver.zenscriptmcp.runtime.PageStore;
 import com.shiver.zenscriptmcp.runtime.SnapshotStore;
 import java.lang.management.ManagementFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -21,11 +23,14 @@ public final class ToolRegistry {
 
     private static final int MAX_WAIT_TICKS = 12_000;
     private static final int MAX_TIMEOUT_MILLIS = 300_000;
+    private static final int DEFAULT_WAIT_MILLIS = 1000;
+    private static final int MAX_WAIT_MILLIS = 10_000;
 
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     private final SnapshotStore snapshots;
     private final JobManager jobs;
     private final McpConfig config;
+    private final Semaphore httpWaiters = new Semaphore(3);
     private Function<JsonObject, JsonArray> contentProvider = result -> new JsonArray();
     private Supplier<JsonObject> integrationStatus = JsonObject::new;
 
@@ -62,6 +67,7 @@ public final class ToolRegistry {
         // MCP 工具输入的根类型必须显式为 object，包含 oneOf 的动作分支也遵守此约定。
         inputSchema = Json.copy(inputSchema);
         inputSchema.addProperty("type", "object");
+        addPresentation(inputSchema, !name.equals("job_cancel"));
         JsonObject annotations = Json.object(
                 "readOnlyHint", readOnly,
                 "destructiveHint", destructive,
@@ -129,11 +135,48 @@ public final class ToolRegistry {
         JsonObject domainResult;
         try {
             domainResult = tool.handler.apply(arguments);
+            if (!"job_cancel".equals(name) && domainResult.has("job")) {
+                int waitMillis = arguments.has("waitMs") ? arguments.get("waitMs").getAsInt() : DEFAULT_WAIT_MILLIS;
+                if (waitMillis > 0 && "accepted".equals(domainResult.get("status").getAsString())
+                        && httpWaiters.tryAcquire()) {
+                    try {
+                        domainResult = jobs.await(domainResult.getAsJsonObject("job").get("jobId").getAsString(),
+                                waitMillis);
+                    } finally {
+                        httpWaiters.release();
+                    }
+                }
+            }
+            domainResult = ResultView.apply(domainResult, arguments);
+            if (PageStore.byteSize(Json.GSON.toJson(domainResult)) > config.queries.maxPageBytes) {
+                JsonObject oversized = snapshots.error("result_too_large", "结果超过文本预算；请缩小 fields 或 limit");
+                if (domainResult.has("job")) {
+                    oversized.add("job", domainResult.get("job"));
+                }
+                domainResult = oversized;
+            }
         } catch (DomainException exception) {
-            domainResult = snapshots.error(exception.getCode(), exception.getMessage());
+            domainResult = snapshots.result("error", "error", exception.toJson());
         }
 
         return createToolResult(domainResult);
+    }
+
+    private static void addPresentation(JsonObject schema, boolean wait) {
+        if (schema.has("oneOf")) {
+            for (JsonElement alternative : schema.getAsJsonArray("oneOf")) {
+                addPresentation(alternative.getAsJsonObject(), wait);
+            }
+            return;
+        }
+        JsonObject properties = schema.getAsJsonObject("properties");
+        if (wait) {
+            properties.add("waitMs", Schema.integer(0, MAX_WAIT_MILLIS));
+        }
+        if (!properties.has("view")) {
+            properties.add("view", Schema.enumeration("summary", "full"));
+        }
+        properties.add("fields", Schema.array(Schema.string(), 64));
     }
 
     private void registerStatusTool() {
@@ -178,7 +221,7 @@ public final class ToolRegistry {
                 this::submitWait);
     }
 
-    private JsonObject queryStatus() {
+    public JsonObject queryStatus() {
         JsonObject data = snapshots.status();
         data.add("jobs", jobs.summary());
         data.addProperty("javaVersion", System.getProperty("java.version"));
@@ -215,10 +258,11 @@ public final class ToolRegistry {
 
     private static JsonObject createOutputSchema() {
         JsonObject properties = Json.object(
-                "schemaVersion", Json.object("type", "integer", "const", 1),
+                "schemaVersion", Json.object("type", "integer", "const", 2),
                 "status", Schema.enumeration("accepted", "completed", "error"),
                 "context", createContextSchema(),
                 "observation", createObservationSchema(),
+                "pagination", Json.object("type", "object"),
                 "data", Json.object("type", "object"),
                 "job", Json.object("type", "object"),
                 "error", Json.object("type", "object"));
@@ -232,7 +276,7 @@ public final class ToolRegistry {
                 "type", "object",
                 "required", new String[] {"schemaVersion", "status", "context"},
                 "properties", properties,
-                "oneOf", payloadAlternatives);
+                "anyOf", payloadAlternatives);
     }
 
     private static JsonObject createContextSchema() {

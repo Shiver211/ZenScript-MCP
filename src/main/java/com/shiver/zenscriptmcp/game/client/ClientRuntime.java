@@ -10,8 +10,10 @@ import com.shiver.zenscriptmcp.integration.IntegrationBootstrap;
 import com.shiver.zenscriptmcp.integration.IntegrationRegistry;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.protocol.ActionTools;
+import com.shiver.zenscriptmcp.protocol.BatchTools;
 import com.shiver.zenscriptmcp.protocol.McpHttpServer;
 import com.shiver.zenscriptmcp.protocol.QueryTools;
+import com.shiver.zenscriptmcp.protocol.Schema;
 import com.shiver.zenscriptmcp.protocol.ToolRegistry;
 import com.shiver.zenscriptmcp.protocol.WaitTools;
 import com.shiver.zenscriptmcp.runtime.EventBuffer;
@@ -28,6 +30,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiDownloadTerrain;
+import net.minecraft.client.multiplayer.GuiConnecting;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -83,6 +87,7 @@ public final class ClientRuntime implements AutoCloseable {
         screens = new ScreenReader(events);
         screenshots = new ScreenshotService(config.screenshots, screens, gameDirectory, snapshots);
         clientContainers = new ContainerTracker(events, "client");
+        clientContainers.setAdapterTarget(screens::slotTarget, screens::refreshWidgets);
         serverContainers = new ContainerTracker(events, "server");
         eventCollector = new EventCollector(snapshots, events);
         BindingRegistry bindings = new BindingRegistry();
@@ -95,11 +100,16 @@ public final class ClientRuntime implements AutoCloseable {
         ActionService actions = new ActionService(snapshots, executor, jobs, config, events, inputs,
                 clientContainers, gui, transactions);
         new ActionTools(tools, actions, queries).register();
-        new WaitTools(tools, queries, jobs, snapshots, config).register();
+        WaitTools waits = new WaitTools(tools, queries, jobs, snapshots, config);
+        waits.register();
+        new BatchTools(tools, queries, actions, waits, snapshots, jobs, pages, config).register();
+        tools.register("mc_image", "读取缓存图片及有效期；过期或淘汰返回 image_expired。",
+                Schema.object(Json.object("imageId", Schema.string()), "imageId"), true,
+                arguments -> screenshots.image(arguments.get("imageId").getAsString()));
         tools.setContentProvider(screenshots::content);
         tools.setIntegrationStatus(integrations::status);
         if (config.enabled) {
-            IntegrationBootstrap.load(integrations, tools, gameDirectory, snapshots, jobs, config, events);
+            IntegrationBootstrap.load(integrations, tools, gameDirectory, snapshots, jobs, config, events, screens);
         }
     }
 
@@ -268,6 +278,7 @@ public final class ClientRuntime implements AutoCloseable {
                 "source", "client",
                 "available", true,
                 "worldAvailable", currentWorld != null,
+                "worldState", worldState(minecraft),
                 "playerAvailable", minecraft.player != null,
                 "playerUuid", minecraft.player == null ? null : minecraft.player.getUniqueID().toString(),
                 "paused", paused,
@@ -276,6 +287,16 @@ public final class ClientRuntime implements AutoCloseable {
                 "screen", screenClass,
                 "dimension", dimension,
                 "mode", connectionMode(minecraft));
+    }
+
+    private String worldState(Minecraft minecraft) {
+        if (currentWorld != null) {
+            return minecraft.player == null ? "loading" : "ready";
+        }
+        if (minecraft.currentScreen instanceof GuiConnecting || minecraft.currentScreen instanceof GuiDownloadTerrain) {
+            return "loading";
+        }
+        return "none";
     }
 
     private String connectionMode(Minecraft minecraft) {

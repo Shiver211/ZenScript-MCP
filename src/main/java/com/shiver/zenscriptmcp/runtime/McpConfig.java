@@ -147,12 +147,12 @@ public final class McpConfig {
 
     public static final class QuerySettings {
 
-        public int defaultLimit = 100;
+        public int defaultLimit = 50;
         public int maxLimit = 1000;
         public int maxBlocksPerTick = 2048;
         public int maxScanBlocks = 262_144;
         public int maxResults = 10_000;
-        public int maxPageBytes = 262_144;
+        public int maxPageBytes = 32_768;
         public int retainedPages = 32;
         public int maxCacheBytes = 16_777_216;
         public int maxNbtNodes = 4096;
@@ -175,5 +175,6 @@ public final class McpConfig {
 
         public boolean crafttweaker = true;
         public boolean gameStages = true;
+        public boolean modularUi = true;
     }
 }

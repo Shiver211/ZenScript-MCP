@@ -141,11 +141,11 @@ public final class CapabilityReader {
     }
 
     private static int offset(JsonObject arguments) {
-        return arguments.has("offset") ? arguments.get("offset").getAsInt() : 0;
+        return 0;
     }
 
     private static int limit(QueryContext context, JsonObject arguments) {
-        return arguments.has("limit") ? arguments.get("limit").getAsInt() : context.settings().defaultLimit;
+        return context.settings().maxResults;
     }
 
     private static JsonObject pagination(int offset, int count, int total) {

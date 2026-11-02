@@ -17,12 +17,15 @@ function New-McpConnection {
     $null = Invoke-McpRequest $connection 'initialize' @{
         protocolVersion = '2025-11-25'
         capabilities = @{}
-        clientInfo = @{ name = 'zenscriptmcp-runner'; version = '1.0' }
+        clientInfo = @{ name = 'zenscriptmcp-runner'; version = '2.0' }
     }
     $null = Invoke-McpRequest $connection 'notifications/initialized' @{} -Notification
     $status = Invoke-McpTool $connection 'mc_status' @{}
     if ($status.status -ne 'completed') {
         throw '无法取得 MCP 实例状态。'
+    }
+    if ($status.schemaVersion -ne 2 -or $status.data.apiVersion -ne '2.0') {
+        throw 'api_version_mismatch：需要领域协议 v2。'
     }
     $connection.InstanceId = $status.context.instanceId
     return $connection
@@ -68,7 +71,7 @@ function Invoke-McpTool {
     )
     if ($CancellationFile -and (Test-Path -LiteralPath $CancellationFile)) {
         return @{
-            status = 'error'; error = @{ code = 'cancelled'; message = '场景已取消，没有提交新操作。' }
+            status = 'error'; error = @{ code = 'cancelled'; message = '场景已取消，没有提交新操作。'; stage = 'runner'; details = @{} }
         }
     }
     $reply = Invoke-McpRequest $Connection 'tools/call' @{ name = $Name; arguments = $Arguments }
@@ -91,35 +94,26 @@ function Invoke-McpTool {
             $stopRequested = $true
             $stopTimer = [Diagnostics.Stopwatch]::StartNew()
         }
+        $resultView = $Arguments['view'] ?? 'summary'
+        if ($resultView -eq 'diff') { $resultView = 'full' }
+        $pollArguments = @{ jobId = $jobId; waitMs = 1000; view = $resultView }
+        if ($Arguments.ContainsKey('fields')) {
+            $pollArguments.fields = $Arguments.fields
+        }
         $reply = Invoke-McpRequest $Connection 'tools/call' @{
-            name = 'job_status'; arguments = @{ jobId = $jobId }
+            name = 'job_status'; arguments = $pollArguments
         }
         $domain = $reply.structuredContent
         Assert-McpInstance $Connection $domain
-        if ($domain.status -eq 'error') {
+        $domain.content = @($reply.content | Where-Object type -ne 'text')
+        if ($domain.status -ne 'accepted') {
             return $domain
         }
         $job = $domain.job
-        if ($job.state -in @('succeeded', 'failed', 'cancelled', 'timed_out')) {
-            $result = @{
-                status = 'completed'; context = $domain.context; job = $job
-                content = @($reply.content | Where-Object type -ne 'text')
-            }
-            if ($job['result']) {
-                foreach ($key in $job.result.Keys) {
-                    $result[$key] = $job.result[$key]
-                }
-            }
-            if ($job.state -ne 'succeeded') {
-                $result.status = 'error'
-                $result.error = $job.error
-            }
-            return $result
-        }
         if ($stopRequested -and $stopTimer.Elapsed.TotalSeconds -ge 30) {
             return @{
                 status = 'error'; context = $domain.context; job = $job
-                error = @{ code = 'cleanup_pending'; message = '取消后尚未完成清理，禁止继续修改或还原世界。' }
+                error = @{ code = 'cleanup_pending'; message = '取消后尚未完成清理，禁止继续修改或还原世界。'; stage = 'cleanup'; details = @{} }
             }
         }
         Start-Sleep -Milliseconds 100
@@ -135,10 +129,19 @@ function Assert-McpInstance {
 
 function Wait-McpReady {
     param([hashtable]$Connection, [switch]$World, [switch]$Server, [int]$TimeoutSeconds = 120)
+    if ($World -or $Server) {
+        $result = Invoke-McpTool $Connection 'mc_wait_for_world' @{
+            requireServer = [bool]$Server; timeoutMs = $TimeoutSeconds * 1000
+        } -TimeoutSeconds ($TimeoutSeconds + 5)
+        if ($result.status -ne 'completed') {
+            throw 'readiness_timeout：世界未在期限内满足就绪条件。'
+        }
+        return Invoke-McpTool $Connection 'mc_status' @{}
+    }
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {
         $status = Invoke-McpTool $Connection 'mc_status' @{}
-        $ready = $status.data.loadingState -eq 'ready' -and $status.data.client['available']
+        $ready = $status.data.runtimeState -eq 'ready' -and $status.data.client['available']
         if ($World) {
             $ready = $ready -and $status.data.client['worldAvailable'] -and $status.data.client['playerAvailable'] `
                 -and -not $status.data.client['paused']

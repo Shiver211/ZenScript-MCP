@@ -67,7 +67,7 @@ public final class EntityReader {
         }
         if (arguments.has("fields")) {
             for (JsonElement field : arguments.getAsJsonArray("fields")) {
-                if (!data.has(field.getAsString())) {
+                if (!data.has(field.getAsString().split("\\.", 2)[0])) {
                     context.missing(field.getAsString() + ":not_applicable");
                 }
             }

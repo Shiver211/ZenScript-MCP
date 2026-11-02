@@ -13,11 +13,14 @@ function Write-RunJson {
 }
 
 function Resolve-ScenarioValue {
-    param($Value, [hashtable]$Values)
+    param($Value, [hashtable]$Values, [string[]]$LocalReferences = @())
     if ($Value -is [System.Collections.IDictionary]) {
         if ($Value.Count -eq 1 -and $Value.Contains('$ref')) {
             $reference = [string]$Value['$ref']
             $parts = $reference.Split('#', 2)
+            if ($parts.Count -eq 2 -and $LocalReferences -contains $parts[0]) {
+                return ,$Value
+            }
             if ($parts.Count -ne 2 -or -not $Values.ContainsKey($parts[0])) {
                 throw "无效场景引用：$reference"
             }
@@ -45,12 +48,12 @@ function Resolve-ScenarioValue {
         }
         $result = @{}
         foreach ($key in $Value.Keys) {
-            $result[$key] = Resolve-ScenarioValue $Value[$key] $Values
+            $result[$key] = Resolve-ScenarioValue $Value[$key] $Values $LocalReferences
         }
         return $result
     }
     if ($Value -is [array]) {
-        $result = @($Value | ForEach-Object { Resolve-ScenarioValue $_ $Values })
+        $result = @($Value | ForEach-Object { Resolve-ScenarioValue $_ $Values $LocalReferences })
         return ,$result
     }
     return ,$Value
@@ -61,7 +64,8 @@ function Get-ScenarioOutcome {
     if ($Result.status -eq 'error') {
         $code = $Result.error.code
         if ($code -in @('world_unavailable', 'player_unavailable', 'source_unavailable', 'unsupported_capability',
-                'permission_denied', 'busy', 'restart_required', 'stale_reference', 'target_unloaded')) {
+                'permission_denied', 'busy', 'queue_full', 'restart_required', 'stale_reference', 'target_unloaded',
+                'snapshot_expired', 'snapshot_scope_mismatch')) {
             return 'blocked'
         }
         if ($code -in @('confirmation_timeout', 'deadline_exceeded', 'cancelled', 'cleanup_pending')) {
@@ -70,6 +74,7 @@ function Get-ScenarioOutcome {
         return 'failed'
     }
     if ($Result.ContainsKey('data') -and $Result.data.ContainsKey('outcome')) {
+        if ($Result.data.outcome -in @('succeeded', 'swapped')) { return 'passed' }
         return $Result.data.outcome
     }
     return 'passed'
@@ -112,11 +117,11 @@ function Save-ScenarioEvents {
         foreach ($event in $events.data.items) {
             $lines.Add((ConvertTo-Json -Depth 100 -Compress -InputObject $event))
         }
-        $request.cursor = $events.data.nextCursor
+        $request.cursor = $events.pagination.nextCursor
         $pages++
-    } while ($events.data.truncated -and $pages -lt 32)
+    } while ($events.pagination.hasMore -and $pages -lt 32)
     [IO.File]::WriteAllLines((Join-Path $RunDirectory 'events.jsonl'), $lines, [Text.UTF8Encoding]::new($false))
-    return @{ cursorGap = $gap; truncated = $events.data.truncated; nextCursor = $events.data.nextCursor }
+    return @{ cursorGap = $gap; truncated = $events.pagination.hasMore; nextCursor = $events.data.nextCursor }
 }
 
 function Invoke-McpScenario {
@@ -151,6 +156,10 @@ function Invoke-McpScenario {
                 throw '每个步骤需要唯一 id，以及 tool、assert 或 task 其中一种。'
             }
             $hasAssertions = $hasAssertions -or $step.ContainsKey('assert') -or $step['tool'] -eq 'mc_assert'
+            if ($step['tool'] -eq 'mc_batch' -and $step.ContainsKey('arguments') `
+                    -and $step.arguments.ContainsKey('steps') -and $step.arguments.steps -is [array]) {
+                $hasAssertions = $hasAssertions -or @($step.arguments.steps | Where-Object tool -eq 'mc_assert').Count -gt 0
+            }
             $ids[$step.id] = $true
         }
         if (-not $hasAssertions) {
@@ -196,7 +205,13 @@ function Invoke-McpScenario {
                         throw '场景由运行器管理作业，不接受显式作业控制步骤。'
                     }
                     if ($step.ContainsKey('arguments')) {
-                        $arguments = Resolve-ScenarioValue $step.arguments $values
+                        $localReferences = @()
+                        if ($name -eq 'mc_batch' -and $step.arguments.ContainsKey('steps') `
+                                -and $step.arguments.steps -is [array]) {
+                            # 批量内部引用交给游戏服务解析；外层场景引用仍由运行器展开。
+                            $localReferences = @($step.arguments.steps | ForEach-Object { $_.id })
+                        }
+                        $arguments = Resolve-ScenarioValue $step.arguments $values $localReferences
                     }
                 }
                 if ($step.ContainsKey('task')) {

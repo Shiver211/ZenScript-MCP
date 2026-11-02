@@ -144,9 +144,8 @@ final class ContainerActionTask implements JobManager.Task {
             if (!container.getCanCraft(player)) {
                 throw new DomainException("action_rejected", "容器正在等待被拒事务的重新同步");
             }
-            JsonObject current = service.containers().inspect(
-                    context, player, false, Json.object("fields", new String[0]));
-            if (request.has("revision") && request.get("revision").getAsLong() != current.get("revision").getAsLong()) {
+            long revision = service.containers().currentRevision(player, context.epoch(), service.tick());
+            if (request.has("revision") && request.get("revision").getAsLong() != revision) {
                 throw new DomainException("stale_reference", "容器内容已偏离预期 revision");
             }
             ClickType type = ClickType.valueOf(request.get("clickType").getAsString());
@@ -262,7 +261,7 @@ final class ContainerActionTask implements JobManager.Task {
     }
 
     private void checkSize(JsonObject data) {
-        if (PageStore.byteSize(Json.GSON.toJson(data)) * 4 > service.config().queries.maxPageBytes) {
+        if (PageStore.byteSize(Json.GSON.toJson(data)) * 4 > service.config().queries.maxCacheBytes) {
             throw new DomainException("result_too_large", "容器前后证据超过预算，操作尚未执行");
         }
     }

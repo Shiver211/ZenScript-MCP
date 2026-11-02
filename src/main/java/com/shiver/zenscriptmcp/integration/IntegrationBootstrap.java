@@ -3,8 +3,10 @@ package com.shiver.zenscriptmcp.integration;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.shiver.zenscriptmcp.game.client.ScreenReader;
 import com.shiver.zenscriptmcp.integration.crafttweaker.CraftTweakerIntegration;
 import com.shiver.zenscriptmcp.integration.gamestages.GameStagesIntegration;
+import com.shiver.zenscriptmcp.integration.modularui.ModularUiIntegration;
 import com.shiver.zenscriptmcp.model.Json;
 import com.shiver.zenscriptmcp.protocol.ToolRegistry;
 import com.shiver.zenscriptmcp.runtime.EventBuffer;
@@ -28,7 +30,10 @@ public final class IntegrationBootstrap {
     }
 
     public static void load(IntegrationRegistry registry, ToolRegistry tools, Path gameDirectory,
-            SnapshotStore snapshots, JobManager jobs, McpConfig config, EventBuffer events) {
+            SnapshotStore snapshots, JobManager jobs, McpConfig config, EventBuffer events, ScreenReader screens) {
+        String modularUi = version("modularui");
+        registry.load("modularui", modularUi, config.integrations.modularUi, "3.1.6".equals(modularUi),
+                () -> new ModularUiIntegration(screens), tools);
         String craftTweaker = version("crafttweaker");
         String zenUtils = version("zenutils");
         boolean supported = "1.12-4.1.20.698".equals(craftTweaker)

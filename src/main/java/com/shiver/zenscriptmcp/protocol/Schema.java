@@ -143,6 +143,9 @@ public final class Schema {
             String propertyPath = path + "." + propertyName;
 
             if (!properties.has(propertyName)) {
+                if (schema.has("additionalProperties") && schema.get("additionalProperties").getAsBoolean()) {
+                    continue;
+                }
                 throw invalidParameter(propertyPath);
             }
 

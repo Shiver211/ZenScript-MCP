@@ -11,7 +11,8 @@ public final class InputLoadingPlugin implements IFMLLoadingPlugin {
 
     @Override
     public String[] getASMTransformerClass() {
-        return new String[] {"com.shiver.zenscriptmcp.core.InputPollingTransformer"};
+        return new String[] {"com.shiver.zenscriptmcp.core.InputPollingTransformer",
+                "com.shiver.zenscriptmcp.core.CommandFeedbackTransformer"};
     }
 
     @Override

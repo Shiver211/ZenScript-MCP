@@ -143,7 +143,7 @@ public final class WorldReader {
             }
         }
         JsonObject result = Json.object("rule", "collision", "dimension", world.provider.getDimension(),
-                "start", vector(start), "end", vector(end), "hit", null);
+                "start", vector(start), "end", vector(end), "hit", false);
         if (hit != null) {
             JsonObject target = hit.entityHit != null ? EntityReader.reference(context, hit.entityHit)
                     : Json.object("kind", "block", "dimension", world.provider.getDimension(),

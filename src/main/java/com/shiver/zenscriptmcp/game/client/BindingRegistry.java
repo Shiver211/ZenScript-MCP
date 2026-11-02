@@ -72,7 +72,23 @@ public final class BindingRegistry {
                         return binding;
                     }
                 }
-                throw new DomainException("stale_reference", "当前目录没有该按键绑定：" + id);
+                return resolveDescription(settings, id);
         }
+    }
+
+    private static KeyBinding resolveDescription(GameSettings settings, String description) {
+        KeyBinding matched = null;
+        for (KeyBinding binding : settings.keyBindings) {
+            if (description.equals(binding.getKeyDescription())) {
+                if (matched != null) {
+                    throw new DomainException("invalid_target", "按键名称重复，请使用 mc_catalog 返回的 binding ID");
+                }
+                matched = binding;
+            }
+        }
+        if (matched == null) {
+            throw new DomainException("stale_reference", "当前目录没有该按键绑定：" + description);
+        }
+        return matched;
     }
 }

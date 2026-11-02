@@ -134,7 +134,7 @@ function Start-ManagedInstance {
                 $connection = New-McpConnection $Config.endpoint $Config.tokenFile
                 $status = Invoke-McpTool $connection 'mc_status' @{}
                 if ($status.data['processId'] -eq [string]$state.processId `
-                        -and $status.data.loadingState -eq 'ready' `
+                        -and $status.data.runtimeState -eq 'ready' `
                         -and $status.data.client['available'] `
                         -and $connection.InstanceId -ne $oldState['instanceId']) {
                     $state.instanceId = $connection.InstanceId

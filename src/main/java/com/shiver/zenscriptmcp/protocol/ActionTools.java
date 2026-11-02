@@ -55,7 +55,8 @@ public final class ActionTools {
                 "press", Schema.array(Schema.string(), 32), "release", Schema.array(Schema.string(), 32),
                 "look", look());
         input.add("timeline", nonempty(Schema.object(step, "atTick"), 256));
-        register("mc_input", "组合输入时间线；原版别名或 mc_catalog 的绑定 ID，自动使用绑定的修饰键。",
+        register("mc_input", "组合输入时间线；支持 inventory 等别名、key.inventory 等唯一按键名称，"
+                + "或 mc_catalog 的 binding ID；自动使用绑定的修饰键。",
                 Schema.object(input, "durationTicks", "timeline"));
     }
 
@@ -93,6 +94,11 @@ public final class ActionTools {
     }
 
     private void containers() {
+        JsonObject swap = timing();
+        swap.add("first", Schema.string());
+        swap.add("second", Schema.string());
+        register("mc_swap_slots", "使用两个 slotRef 交换；核对实际结果，失败时尽力恢复可识别状态。",
+                Schema.object(swap, "first", "second"));
         JsonObject select = action("select_hotbar");
         select.add("index", Schema.integer(0, 8));
         JsonObject drop = action("drop");
@@ -106,7 +112,6 @@ public final class ActionTools {
         for (String name : new String[] {"PICKUP", "QUICK_MOVE", "SWAP", "CLONE", "THROW",
                 "QUICK_CRAFT", "PICKUP_ALL"}) {
             JsonObject click = timing();
-            click.add("containerId", Schema.string());
             click.add("revision", Schema.integer(0, Integer.MAX_VALUE));
             click.add("clickType", Schema.enumeration(name));
             JsonObject button = Schema.integer(0, "QUICK_CRAFT".equals(name) ? 2 : 1);
@@ -118,20 +123,16 @@ public final class ActionTools {
             }
             click.add("button", button);
             if ("QUICK_CRAFT".equals(name)) {
-                JsonObject slots = nonempty(Schema.integer(0, 65_535), 128);
+                JsonObject slots = nonempty(Schema.string(), 128);
                 slots.addProperty("uniqueItems", true);
-                click.add("slots", slots);
-                types.add(Schema.object(click, "containerId", "clickType", "button", "slots"));
+                click.add("slotRefs", slots);
+                types.add(Schema.object(click, "clickType", "button", "slotRefs"));
             } else {
-                JsonObject slot = Schema.integer(0, 65_535);
-                click.add("slotId", "PICKUP".equals(name)
-                        ? Schema.oneOf(slot, Schema.integer(-999, -999)) : slot);
-                types.add(Schema.object(click, "containerId", "clickType", "button", "slotId"));
+                click.add("slotRef", Schema.string());
+                types.add(Schema.object(click, "clickType", "button", "slotRef"));
             }
         }
-        register("mc_click_slot", "七种原版槽位操作；QUICK_CRAFT 接收槽位序列；-999 只用于 PICKUP 窗口外点击。"
-                + "containerId 必须来自 client 读取；显示槽的 vanillaSlotId 不可用，需走 GUI 点击。"
-                + "等待服务器事务确认及可用的双端状态。",
+        register("mc_click_slot", "统一 slotRef 点击；QUICK_CRAFT 使用 slotRefs。原版槽确认事务，ModularUI 槽走正常 GUI 路径。",
                 Json.object("oneOf", types));
     }
 
@@ -170,6 +171,26 @@ public final class ActionTools {
                 default:
                     variants.add(Schema.object(fields, "screenId", "action"));
             }
+        }
+        for (String action : new String[] {"click", "scroll", "text", "key"}) {
+            JsonObject widget = timing();
+            widget.add("screenId", Schema.string());
+            widget.add("widgetId", Schema.string());
+            widget.add("action", Schema.enumeration(action));
+            String parameter = "button";
+            if ("scroll".equals(action)) {
+                parameter = "delta";
+                widget.add(parameter, Schema.integer(-12000, 12000));
+            } else if ("text".equals(action)) {
+                parameter = "text";
+                widget.add(parameter, text(4096));
+            } else if ("key".equals(action)) {
+                parameter = "keyCode";
+                widget.add(parameter, Schema.integer(1, 255));
+            } else {
+                widget.add(parameter, Schema.integer(0, 2));
+            }
+            variants.add(Schema.object(widget, "widgetId", "action", parameter));
         }
         register("mc_ui_action", "GUI 缩放坐标输入；drag 每个点占一个客户端回调；滚轮正值向上。"
                 + "文本逐字符送到焦点控件，不使用剪贴板；未验证私有设备轮询路径。", Json.object("oneOf", variants));

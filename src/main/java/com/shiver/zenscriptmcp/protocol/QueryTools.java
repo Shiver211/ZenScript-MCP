@@ -68,7 +68,8 @@ public final class QueryTools {
         ray.add("blocks", Schema.bool());
         ray.add("entities", Schema.bool());
         ray.add("stopOnLiquid", Schema.bool());
-        register("mc_raycast", "碰撞射线：当前视角仅 client；显式 start/end 支持两端。不授予交互距离。", ray);
+        register("mc_raycast", "碰撞射线：未命中时 hit=false，命中时 hit 包含 target/position/distance/face。"
+                + "当前视角仅 client；显式 start/end 支持两端。不授予交互距离。", ray);
     }
 
     private void entities() {
@@ -88,19 +89,39 @@ public final class QueryTools {
     private void inventory() {
         JsonObject inventory = common();
         offsetPagination(inventory);
+        inventory.add("view", Schema.enumeration("summary", "full", "diff"));
+        inventory.add("sinceSnapshot", Schema.string());
+        inventory.add("includeEmpty", Schema.bool());
+        inventory.add("includePeer", Schema.bool());
         inventory.add("action", Schema.enumeration("inspect"));
-        register("mc_inventory", "P1 只读玩家库存；slotId 和 inventoryIndex 分开，快捷栏为 0–8。", inventory);
+        register("mc_inventory", "默认读取客户端库存操作视图；使用 slotRef，includeEmpty 包含空槽，diff 读取固定基线差异。", inventory);
         JsonObject container = common();
         offsetPagination(container);
+        container.add("view", Schema.enumeration("summary", "full", "diff"));
+        container.add("sinceSnapshot", Schema.string());
+        container.add("includeEmpty", Schema.bool());
         container.add("action", Schema.enumeration("inspect"));
         container.add("includePeer", Schema.bool());
-        register("mc_container", "P1 只读当前容器；auto 在内置服可用时采集两端，快照不是同一 Tick 的原子事务。", container);
+        register("mc_container", "默认客户端当前容器；includePeer 按需附带跨端证据，不以窗口编号推定映射。", container);
         JsonObject screen = common();
+        screen.add("tooltip", Schema.oneOf(
+                Schema.object(Json.object("slotRef", Schema.string()), "slotRef"),
+                Schema.object(Json.object("widgetId", Schema.string()), "widgetId")));
         screen.add("source", Schema.enumeration("client", "auto"));
         register("mc_screen", "读取 GUI 缩放坐标、screenId、标准按钮和槽位；自绘区域明确标为未知。", screen);
     }
 
     private void data() {
+        JsonObject actualItem = common();
+        actualItem.add("source", Schema.enumeration("auto", "client"));
+        actualItem.add("slotRef", Schema.string());
+        JsonObject defaultItem = common();
+        defaultItem.add("source", Schema.enumeration("auto", "client"));
+        defaultItem.add("registryName", Schema.string());
+        defaultItem.add("metadata", Schema.integer(0, 65535));
+        tools.register("mc_item_inspect", "读取实际槽位或默认物品栈的公开属性、NBT、能力和 tooltip。",
+                Schema.oneOf(Schema.object(actualItem, "slotRef"), Schema.object(defaultItem, "registryName")),
+                true, arguments -> queries.submit("mc_item_inspect", arguments));
         JsonObject capabilities = common();
         offsetPagination(capabilities);
         capabilities.remove("fields");
@@ -114,7 +135,7 @@ public final class QueryTools {
         nbt.add("target", target());
         nbt.add("format", Schema.enumeration("typed", "snbt"));
         nbt.add("path", Schema.array(Schema.string(), 32));
-        nbt.add("offset", Schema.integer(0, Integer.MAX_VALUE - config.queries.maxLimit));
+        nbt.add("cursor", Schema.string());
         nbt.add("limit", Schema.integer(1, config.queries.maxLimit));
         register("mc_nbt", "读取实际目标序列化 NBT；path 为 compound 键/list 下标数组；long 使用十进制字符串。", nbt, "target");
         JsonObject recipes = paged();
@@ -153,7 +174,8 @@ public final class QueryTools {
     private void screenshot() {
         JsonObject properties = Json.object("maxWidth", Schema.integer(1, 4096), "maxHeight", Schema.integer(1, 4096),
                 "keepFile", Schema.bool(), "timeoutMs", Schema.integer(1, 300_000));
-        tools.register("mc_screenshot", "渲染时采集、后台编码；返回作业，完成后 job_status 返回 MCP image 及尺寸映射。",
+        tools.register("mc_screenshot", "渲染时采集、后台编码；在 waitMs 内完成即返回 MCP image 与尺寸映射。"
+                + "accepted 时继续查同一 job_status；mc_image 可凭 imageId 重取图片。",
                 Schema.object(properties), false, false, arguments -> queries.submit("mc_screenshot", arguments));
     }
 
@@ -164,7 +186,8 @@ public final class QueryTools {
 
     private JsonObject common() {
         return Json.object("source", Schema.enumeration("auto", "client", "server"),
-                "fields", Schema.array(Schema.string(), MAX_FIELDS), "timeoutMs", Schema.integer(1, 300_000));
+                "fields", Schema.array(Schema.string(), MAX_FIELDS), "timeoutMs", Schema.integer(1, 300_000),
+                "limit", Schema.integer(1, config.queries.maxLimit), "cursor", Schema.string());
     }
 
     private JsonObject paged() {
@@ -175,7 +198,7 @@ public final class QueryTools {
     }
 
     private void offsetPagination(JsonObject properties) {
-        properties.add("offset", Schema.integer(0, Integer.MAX_VALUE - config.queries.maxLimit));
+        properties.add("cursor", Schema.string());
         properties.add("limit", Schema.integer(1, config.queries.maxLimit));
     }
 
@@ -218,8 +241,8 @@ public final class QueryTools {
         JsonObject player = Schema.object(Json.object("kind", Schema.enumeration("player"), "uuid", Schema.string(),
                 "instanceId", Schema.string(),
                 "worldEpoch", Schema.integer(0, Integer.MAX_VALUE)), "kind");
-        JsonObject item = Schema.object(Json.object("kind", Schema.enumeration("item"), "containerId", Schema.string(),
-                "slotId", Schema.integer(0, 65_535)), "kind", "containerId", "slotId");
+        JsonObject item = Schema.object(Json.object("kind", Schema.enumeration("item"), "slotRef", Schema.string()),
+                "kind", "slotRef");
         return Schema.oneOf(blockTarget(), entityTarget(), player, item);
     }
 }

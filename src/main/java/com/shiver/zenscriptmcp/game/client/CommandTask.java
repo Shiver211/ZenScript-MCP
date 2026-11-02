@@ -70,7 +70,7 @@ final class CommandTask implements JobManager.Task {
             }
             data.addProperty("senderClass", minecraft.player.getClass().getName());
             data.addProperty("sender", minecraft.player.getName());
-            int returned = ClientCommandHandler.instance.executeCommand(minecraft.player, text);
+            int returned = executeCaptured(ClientCommandHandler.instance, minecraft.player, text);
             data.addProperty("handlerReturn", returned);
             if (returned != 0 || "client".equals(mode)) {
                 data.addProperty("route", "client");
@@ -85,6 +85,7 @@ final class CommandTask implements JobManager.Task {
                 }
                 minecraft.player.sendChatMessage(text);
                 data.addProperty("route", "server_via_player_connection");
+                data.addProperty("executionState", "sent");
                 data.addProperty("serverReturnAvailable", false);
             }
         }
@@ -100,7 +101,7 @@ final class CommandTask implements JobManager.Task {
         String name = normalized.split(" ", 2)[0];
         ICommand command = manager.getCommands().get(name);
         boolean permitted = command != null && command.checkPermission(server, sender);
-        int returned = manager.executeCommand(sender, text);
+        int returned = executeCaptured(manager, sender, text);
         data.addProperty("handlerReturn", returned);
         data.addProperty("commandKnown", command != null);
         data.addProperty("permitted", permitted);
@@ -111,12 +112,34 @@ final class CommandTask implements JobManager.Task {
         data.addProperty("confirmationScope", "synchronous_command_return");
     }
 
+    private int executeCaptured(ICommandManager manager, ICommandSender sender, String text) {
+        try (CommandFeedback feedback = new CommandFeedback(sender)) {
+            int returned;
+            try {
+                returned = manager.executeCommand(sender, text);
+            } catch (RuntimeException exception) {
+                CommandFeedback.exception(exception);
+                data.add("feedback", feedback.result());
+                fail("command_failed", exception.toString());
+                return 0;
+            }
+            data.add("feedback", feedback.result());
+            data.addProperty("handlerReturn", returned);
+            if (feedback.failed()) {
+                fail("command_failed", "命令处理器捕获到异常；详见原始反馈");
+            }
+            data.addProperty("executionState", returned > 0 ? "succeeded" : "unhandled_or_failed");
+            return returned;
+        }
+    }
+
     private void fail(String code, String message) {
         data.addProperty("messageCursorEnd", service.events().cursor());
         data.add("messages", service.events().read(Json.object("cursor", cursor), false, 100));
         data.addProperty("confirmation", "rejected");
         result = context.result(data);
-        throw new DomainException(code, message);
+        throw new DomainException(code, message, "command", Json.object("feedback", data.get("feedback"),
+                "route", data.get("route")));
     }
 
     @Override

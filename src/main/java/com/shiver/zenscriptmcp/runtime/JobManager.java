@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
@@ -19,6 +20,8 @@ import java.util.function.LongSupplier;
 public final class JobManager {
 
     private static final int MAX_ACTIVE_JOBS = 128;
+    private static final int MAX_WAITING_MUTATIONS = 32;
+    private static final long CLEANUP_BUDGET_NANOS = TimeUnit.MILLISECONDS.toNanos(3000);
 
     private final Map<String, Job> jobs = new LinkedHashMap<>();
     private final SnapshotStore snapshots;
@@ -59,7 +62,7 @@ public final class JobManager {
 
         Job existingJob = findOperation(operationId, toolName, arguments);
         if (existingJob != null) {
-            return snapshots.result("accepted", "job", toJson(existingJob));
+            return result(existingJob);
         }
 
         ensureCapacity(modifiesGameState);
@@ -70,17 +73,34 @@ public final class JobManager {
                 deadlineNanos, operationId, timeoutMillis);
 
         jobs.put(job.id, job);
-        if (modifiesGameState) {
+        if (!modifiesGameState) {
+            scheduleNewJob(job);
+        } else if (exclusiveJobId == null) {
             exclusiveJobId = job.id;
+            scheduleNewJob(job);
         }
-
-        scheduleNewJob(job);
         return snapshots.result("accepted", "job", toJson(job));
     }
 
     public synchronized JsonObject status(String jobId) {
         maintain();
-        return snapshots.result("completed", "job", toJson(requireJob(jobId)));
+        return result(requireJob(jobId));
+    }
+
+    /** 仅供 HTTP 调用；等待通知时不持有作业锁。 */
+    public JsonObject await(String jobId, int waitMillis) {
+        Job job;
+        synchronized (this) {
+            job = requireJob(jobId);
+        }
+        try {
+            job.completion.await(waitMillis, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+        synchronized (this) {
+            return result(job);
+        }
     }
 
     public synchronized JsonObject cancel(String jobId) {
@@ -92,9 +112,9 @@ public final class JobManager {
         }
         maintain();
 
-        JsonObject data = toJson(job);
-        data.addProperty("cancelAccepted", cancelAccepted);
-        return snapshots.result("completed", "job", data);
+        JsonObject response = result(job);
+        response.getAsJsonObject("job").addProperty("cancelAccepted", cancelAccepted);
+        return response;
     }
 
     public synchronized JsonObject cancelMutation(String toolName) {
@@ -114,6 +134,7 @@ public final class JobManager {
 
         return Json.object(
                 "activeCount", countActiveJobs(),
+                "waitingMutations", waitingMutations(),
                 "mutation", activeMutation);
     }
 
@@ -172,7 +193,7 @@ public final class JobManager {
                 continue;
             }
 
-            if (!toolName.equals(job.toolName) || !arguments.equals(job.arguments)) {
+            if (!toolName.equals(job.toolName) || !operationArguments(arguments).equals(job.arguments)) {
                 throw new IllegalArgumentException("operationId 已用于其他参数");
             }
 
@@ -183,13 +204,18 @@ public final class JobManager {
     }
 
     private void ensureCapacity(boolean modifiesGameState) {
-        if (modifiesGameState && exclusiveJobId != null) {
-            throw new DomainException("busy", "已有修改作业，或输入清理尚未完成");
+        if (modifiesGameState && exclusiveJobId != null && waitingMutations() >= MAX_WAITING_MUTATIONS) {
+            throw new DomainException("queue_full", "修改作业等待队列已满（最多 32 个）");
         }
 
         if (countActiveJobs() >= MAX_ACTIVE_JOBS) {
             throw new DomainException("busy", "活动作业已达上限");
         }
+    }
+
+    private long waitingMutations() {
+        return jobs.values().stream().filter(job -> job.modifiesGameState && !job.isTerminal()
+                && !job.id.equals(exclusiveJobId)).count();
     }
 
     private long countActiveJobs() {
@@ -211,6 +237,10 @@ public final class JobManager {
             return;
         }
 
+        if (job.finishing) {
+            advanceCleanup(job);
+            return;
+        }
         JsonObject result = null;
         Exception failure = null;
 
@@ -224,12 +254,12 @@ public final class JobManager {
         }
 
         if (isStopRequested(job) || result != null || failure != null) {
-            finishJob(job, result, failure);
+            beginCleanup(job, result, failure);
         } else {
             try {
                 schedule(job);
             } catch (RuntimeException exception) {
-                finishJob(job, null, exception);
+                beginCleanup(job, null, exception);
             }
         }
     }
@@ -239,6 +269,9 @@ public final class JobManager {
             return false;
         }
 
+        if (job.finishing) {
+            return true;
+        }
         checkDeadline(job);
         if (job.worldBound && job.worldEpoch != snapshots.worldEpoch()) {
             job.stopCode = "stale_reference";
@@ -253,10 +286,12 @@ public final class JobManager {
     }
 
     private void schedule(Job job) {
+        GameExecutor.Side requestedSide = job.task.executionSide();
+        GameExecutor.Side side = requestedSide == null ? job.side : requestedSide;
         if (job.modifiesGameState) {
-            executor.submitAction(job.side, () -> advance(job));
+            executor.submitAction(side, () -> advance(job));
         } else {
-            executor.submit(job.side, () -> advance(job));
+            executor.submit(side, () -> advance(job));
         }
     }
 
@@ -269,13 +304,52 @@ public final class JobManager {
         checkDeadline(job);
     }
 
-    private void finishJob(Job job, JsonObject result, Exception failure) {
+    private void beginCleanup(Job job, JsonObject result, Exception failure) {
+        synchronized (this) {
+            job.finishing = true;
+            job.finishStartedNanos = nanoClock.getAsLong();
+            job.finishResult = result;
+            job.finishFailure = failure;
+            job.state = JobState.FINISHING;
+        }
+        advanceCleanup(job);
+    }
+
+    private void advanceCleanup(Job job) {
+        boolean expired = nanoClock.getAsLong() - job.finishStartedNanos >= CLEANUP_BUDGET_NANOS;
+        String reason = "succeeded";
+        if (job.stopCode != null) {
+            reason = job.stopCode;
+        } else if (job.finishFailure != null) {
+            reason = "failed";
+        }
+        try {
+            if (job.startedAt != null && !job.task.finishStep(reason, expired)) {
+                if (expired) {
+                    throw new DomainException("cleanup_failed", "收尾阶段超过 3000 ms 独立预算");
+                }
+                schedule(job);
+                return;
+            }
+        } catch (Exception exception) {
+            finishJob(job, job.finishResult, job.finishFailure, exception);
+            return;
+        }
+        finishJob(job, job.task.lastResult() == null ? job.finishResult : job.task.lastResult(),
+                job.finishFailure, null);
+    }
+
+    private void finishJob(Job job, JsonObject result, Exception failure, Exception finishFailure) {
         // 不持有查询锁：即使模组清理回调卡住，HTTP 状态查询仍然可以响应。
         Exception cleanupFailure = cleanupTask(job);
+        Exception effectiveFailure = failure == null ? finishFailure : failure;
 
         synchronized (this) {
             job.cleanupComplete = cleanupFailure == null;
-            applyOutcome(job, result, failure, cleanupFailure);
+            applyOutcome(job, result, effectiveFailure, cleanupFailure);
+            if (finishFailure != null && job.error != null) {
+                job.error.getAsJsonObject("details").addProperty("recoveryError", finishFailure.toString());
+            }
             releaseCompletedJob(job);
             trimCompletedJobs();
         }
@@ -313,7 +387,8 @@ public final class JobManager {
                     ? ((DomainException) failure).getCode()
                     : "action_rejected";
             job.state = JobState.FAILED;
-            job.error = createError(errorCode, failure.toString());
+            job.error = failure instanceof DomainException ? ((DomainException) failure).toJson()
+                    : createError(errorCode, failure.toString());
         } else {
             job.state = JobState.SUCCEEDED;
             job.result = Json.copy(result);
@@ -327,6 +402,8 @@ public final class JobManager {
         if (job.cleanupComplete) {
             releaseMutationLock(job);
         }
+        job.completion.countDown();
+        startNextMutation();
     }
 
     private void releaseMutationLock(Job job) {
@@ -335,8 +412,36 @@ public final class JobManager {
         }
     }
 
+    private void startNextMutation() {
+        if (exclusiveJobId != null || closed) {
+            return;
+        }
+        for (Job next : jobs.values()) {
+            if (!next.modifiesGameState || next.isTerminal() || next.startedAt != null || next.stopCode != null) {
+                continue;
+            }
+            checkDeadline(next);
+            if (next.stopCode != null) {
+                continue;
+            }
+            exclusiveJobId = next.id;
+            try {
+                schedule(next);
+                return;
+            } catch (RuntimeException exception) {
+                next.state = JobState.FAILED;
+                next.error = createError("source_unavailable", exception.toString());
+                next.cleanupComplete = true;
+                next.endedAt = Instant.now().toString();
+                next.task = null;
+                next.completion.countDown();
+                exclusiveJobId = null;
+            }
+        }
+    }
+
     private void checkDeadline(Job job) {
-        if (job.isTerminal() || nanoClock.getAsLong() - job.deadlineNanos < 0) {
+        if (job.finishing || job.isTerminal() || nanoClock.getAsLong() - job.deadlineNanos < 0) {
             return;
         }
 
@@ -348,7 +453,7 @@ public final class JobManager {
 
     private void requestStop(Job job, String stopCode) {
         job.stopCode = stopCode;
-        if (job.startedAt != null) {
+        if (job.startedAt != null && !job.finishing) {
             job.state = JobState.CANCEL_REQUESTED;
         }
     }
@@ -386,15 +491,45 @@ public final class JobManager {
                 "steps", job.executedSteps,
                 "timeoutMillis", job.timeoutMillis,
                 "deadlineExceeded", job.deadlineExceeded,
-                "cleanupComplete", job.cleanupComplete,
-                "result", job.result == null ? null : Json.copy(job.result),
-                "error", job.error == null ? null : Json.copy(job.error));
+                "cleanupComplete", job.cleanupComplete);
+    }
+
+    private JsonObject result(Job job) {
+        JsonObject result = snapshots.result(job.isTerminal() ? "completed" : "accepted", "job", toJson(job));
+        if (job.result != null) {
+            if (job.result.has("data")) {
+                result.add("data", Json.copy(job.result.getAsJsonObject("data")));
+                if (job.result.has("observation")) {
+                    result.add("observation", job.result.get("observation"));
+                }
+                if (job.result.has("pagination")) {
+                    result.add("pagination", job.result.get("pagination"));
+                }
+            } else {
+                result.add("data", Json.copy(job.result));
+            }
+        }
+        if (job.error != null) {
+            result.addProperty("status", "error");
+            result.add("error", Json.copy(job.error));
+        }
+        return result;
+    }
+
+    private static JsonObject operationArguments(JsonObject arguments) {
+        JsonObject value = Json.copy(arguments);
+        for (String key : new String[] {"waitMs", "view", "fields", "limit", "cursor"}) {
+            value.remove(key);
+        }
+        return value;
     }
 
     private JsonObject createError(String code, String message) {
         return Json.object(
                 "code", code,
-                "message", message);
+                "message", message,
+                "stage", "execution",
+                "details", new JsonObject());
     }
 
     private void trimCompletedJobs() {
@@ -415,6 +550,16 @@ public final class JobManager {
         /** 返回 null 表示下一 Tick 继续；回调在所属游戏线程运行。 */
         JsonObject step() throws Exception;
 
+        /** 跨线程任务只返回下一回调所属端，不在此读取游戏对象。 */
+        default GameExecutor.Side executionSide() {
+            return null;
+        }
+
+        /** 结束路径可跨 tick 补偿；到期必须停止补偿并保存剩余证据。 */
+        default boolean finishStep(String reason, boolean expired) throws Exception {
+            return true;
+        }
+
         /** 作业开始后，所有结束路径都会在所属游戏线程调用清理。 */
         default void cleanup() throws Exception {
         }
@@ -429,6 +574,7 @@ public final class JobManager {
         QUEUED("queued", false),
         RUNNING("running", false),
         CANCEL_REQUESTED("cancel_requested", false),
+        FINISHING("finishing", false),
         SUCCEEDED("succeeded", true),
         FAILED("failed", true),
         CANCELLED("cancelled", true),
@@ -457,6 +603,7 @@ public final class JobManager {
         private final long worldEpoch;
         private final long deadlineNanos;
         private final int timeoutMillis;
+        private final CountDownLatch completion = new CountDownLatch(1);
 
         private Task task;
         private JobState state = JobState.QUEUED;
@@ -467,6 +614,10 @@ public final class JobManager {
         private JsonObject error;
         private boolean cleanupComplete;
         private boolean deadlineExceeded;
+        private boolean finishing;
+        private long finishStartedNanos;
+        private JsonObject finishResult;
+        private Exception finishFailure;
         private long executedSteps;
 
         private Job(
@@ -481,7 +632,7 @@ public final class JobManager {
                 String operationId,
                 int timeoutMillis) {
             this.toolName = toolName;
-            this.arguments = Json.copy(arguments);
+            this.arguments = operationArguments(arguments);
             this.side = side;
             this.task = task;
             this.modifiesGameState = modifiesGameState;

@@ -64,6 +64,31 @@ public final class ActionService {
                 QueryContext.string(request, "operationId", null), new DeferredTask(tool, request, side));
     }
 
+    public GameExecutor.Side sideFor(String tool, JsonObject arguments) {
+        return "mc_command".equals(tool) && QueryContext.string(arguments, "mode", "player").startsWith("server_")
+                ? GameExecutor.Side.SERVER : GameExecutor.Side.CLIENT;
+    }
+
+    public JsonObject cursorState() {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft == null || minecraft.player == null) {
+            return Json.object("available", false);
+        }
+        return Json.object("available", true, "empty", minecraft.player.inventory.getItemStack().isEmpty(),
+                "serializedNbt", minecraft.player.inventory.getItemStack().serializeNBT().toString(),
+                "containerId", containers.currentId());
+    }
+
+    public JobManager.Task internalTask(String tool, JsonObject arguments) {
+        if ("mc_click_slot".equals(tool)) {
+            return new SlotClickTask(this, Json.copy(arguments), gui);
+        }
+        if ("mc_swap_slots".equals(tool)) {
+            return new SwapSlotsTask(this, Json.copy(arguments), gui);
+        }
+        return new DeferredTask(tool, Json.copy(arguments), sideFor(tool, arguments));
+    }
+
     QueryContext context(GameExecutor.Side side) {
         return new QueryContext(side, snapshots, events, config.queries, config.runtime.readBudgetMillis);
     }
@@ -122,7 +147,10 @@ public final class ActionService {
             case "mc_entity_interact":
             case "mc_item_use":
                 return new InteractionTask(this, tool, request);
+            case "mc_swap_slots":
+                return new SwapSlotsTask(this, request, gui);
             case "mc_click_slot":
+                return new SlotClickTask(this, request, gui);
             case "mc_inventory":
             case "mc_container":
                 return new ContainerActionTask(this, tool, request);
@@ -155,10 +183,15 @@ public final class ActionService {
                 delegate = create(tool, request, side);
             }
             JsonObject result = delegate.step();
-            if (result != null && PageStore.byteSize(Json.GSON.toJson(result)) > config.queries.maxPageBytes) {
+            if (result != null && PageStore.byteSize(Json.GSON.toJson(result)) > config.queries.maxCacheBytes) {
                 throw new DomainException("result_too_large", "操作证据超过结果预算");
             }
             return result;
+        }
+
+        @Override
+        public boolean finishStep(String reason, boolean expired) throws Exception {
+            return delegate == null || delegate.finishStep(reason, expired);
         }
 
         @Override

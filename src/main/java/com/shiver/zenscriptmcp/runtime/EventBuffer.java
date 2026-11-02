@@ -14,7 +14,7 @@ import java.util.Map;
 public final class EventBuffer {
 
     private static final int MAX_EVENT_CHARACTERS = 8192;
-    private static final int MAX_PAGE_BYTES = 131_072;
+    private static final int MAX_PAGE_BYTES = 30_720;
 
     private final Deque<Entry> entries = new ArrayDeque<>();
     private final SnapshotStore snapshots;
@@ -54,6 +54,16 @@ public final class EventBuffer {
     }
 
     public synchronized JsonObject read(JsonObject arguments, boolean chatOnly, int defaultLimit) {
+        return read(arguments, chatOnly, defaultLimit, MAX_PAGE_BYTES);
+    }
+
+    public synchronized JsonObject snapshot(JsonObject arguments, boolean chatOnly) {
+        JsonObject request = Json.copy(arguments);
+        request.addProperty("limit", capacity);
+        return read(request, chatOnly, capacity, Integer.MAX_VALUE);
+    }
+
+    private JsonObject read(JsonObject arguments, boolean chatOnly, int defaultLimit, int maxBytes) {
         long cursor = arguments.has("cursor") ? decodeCursor(arguments.get("cursor").getAsString()) : 0;
         int limit = arguments.has("limit") ? arguments.get("limit").getAsInt() : defaultLimit;
         String type = arguments.has("type") ? arguments.get("type").getAsString() : "";
@@ -84,7 +94,7 @@ public final class EventBuffer {
                     && matchesTarget(event.getAsJsonObject("data"), arguments);
             if (matches) {
                 int eventBytes = PageStore.byteSize(entry.json);
-                if (bytes + eventBytes > MAX_PAGE_BYTES) {
+                if (bytes + eventBytes > maxBytes) {
                     break;
                 }
                 events.add(event);

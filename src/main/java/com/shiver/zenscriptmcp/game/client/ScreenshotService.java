@@ -1,6 +1,7 @@
 package com.shiver.zenscriptmcp.game.client;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.model.DomainException;
 import com.shiver.zenscriptmcp.model.Json;
@@ -16,9 +17,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Future;
@@ -143,28 +146,41 @@ public final class ScreenshotService implements AutoCloseable {
         }
     }
 
-    public synchronized JsonArray content(JsonObject domainResult) {
-        JsonArray content = new JsonArray();
-        JsonObject payload = domainResult;
-        if (domainResult.has("job")) {
-            JsonObject job = domainResult.getAsJsonObject("job");
-            if (!job.has("result") || !job.get("result").isJsonObject()) {
-                return content;
-            }
-            payload = job.getAsJsonObject("result");
-        }
-        if (!payload.has("data") || !payload.getAsJsonObject("data").has("imageId")) {
-            return content;
-        }
-        JsonObject data = payload.getAsJsonObject("data");
-        String id = data.get("imageId").getAsString();
+    public synchronized JsonObject image(String imageId) {
         expire();
-        ImageEntry image = images.get(id);
-        data.addProperty("imageAvailable", image != null);
-        if (image != null) {
-            content.add(Json.object("type", "image", "mimeType", "image/png", "data", image.base64));
+        ImageEntry image = images.get(imageId);
+        if (image == null) {
+            throw new DomainException("image_expired", "图片已过期或被缓存淘汰", "media", Json.object("imageId", imageId));
         }
+        return snapshots.result("completed", "data", Json.copy(image.metadata));
+    }
+
+    public synchronized JsonArray content(JsonObject domainResult) {
+        expire();
+        JsonArray content = new JsonArray();
+        collectImages(domainResult, content, new HashSet<>());
         return content;
+    }
+
+    private void collectImages(JsonElement value, JsonArray content, Set<String> included) {
+        if (value.isJsonArray()) {
+            for (JsonElement child : value.getAsJsonArray()) {
+                collectImages(child, content, included);
+            }
+        } else if (value.isJsonObject()) {
+            JsonObject object = value.getAsJsonObject();
+            if (object.has("imageId")) {
+                String id = object.get("imageId").getAsString();
+                ImageEntry image = images.get(id);
+                object.addProperty("imageAvailable", image != null);
+                if (image != null && included.add(id)) {
+                    content.add(Json.object("type", "image", "mimeType", "image/png", "data", image.base64));
+                }
+            }
+            for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+                collectImages(entry.getValue(), content, included);
+            }
+        }
     }
 
     private void encode(Request request, BufferedImage image, JsonObject data, JsonObject observation) {
@@ -199,19 +215,20 @@ public final class ScreenshotService implements AutoCloseable {
                 Files.write(path, png);
                 data.addProperty("path", path.toAbsolutePath().toString());
             }
-            retain(id, Base64.getEncoder().encodeToString(png));
             data.addProperty("imageId", id);
             data.addProperty("width", width);
             data.addProperty("height", height);
             data.addProperty("guiToImageX", (double) width / data.get("guiWidth").getAsInt());
             data.addProperty("guiToImageY", (double) height / data.get("guiHeight").getAsInt());
+            data.addProperty("expiresAt", Instant.now().plusNanos(RETENTION_NANOS).toString());
+            retain(id, Base64.getEncoder().encodeToString(png), data);
             request.result = Json.GSON.toJson(Json.object("observation", observation, "data", data));
         } catch (IOException | RuntimeException exception) {
             request.error = new DomainException("screenshot_failed", exception.toString());
         }
     }
 
-    private synchronized void retain(String id, String image) {
+    private synchronized void retain(String id, String image, JsonObject metadata) {
         expire();
         if (image.length() > MAX_RETAINED_CHARACTERS) {
             throw new DomainException("result_too_large", "PNG 超过图片缓存预算");
@@ -222,7 +239,7 @@ public final class ScreenshotService implements AutoCloseable {
             retainedCharacters -= iterator.next().base64.length();
             iterator.remove();
         }
-        images.put(id, new ImageEntry(image));
+        images.put(id, new ImageEntry(image, metadata));
         retainedCharacters += image.length();
     }
 
@@ -263,10 +280,12 @@ public final class ScreenshotService implements AutoCloseable {
     private static final class ImageEntry {
 
         private final String base64;
+        private final JsonObject metadata;
         private final long createdNanos = System.nanoTime();
 
-        private ImageEntry(String base64) {
+        private ImageEntry(String base64, JsonObject metadata) {
             this.base64 = base64;
+            this.metadata = Json.copy(metadata);
         }
     }
 }

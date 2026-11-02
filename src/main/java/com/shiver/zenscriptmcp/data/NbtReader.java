@@ -42,8 +42,8 @@ public final class NbtReader {
 
     public JsonObject read(NBTBase root, JsonObject arguments) {
         NBTBase selected = path(root, arguments);
-        int offset = arguments.has("offset") ? arguments.get("offset").getAsInt() : 0;
-        int limit = arguments.has("limit") ? arguments.get("limit").getAsInt() : settings.defaultLimit;
+        int offset = 0;
+        int limit = settings.maxNbtNodes;
         JsonObject typed = encode(selected, 0, offset, limit);
         String format = QueryContext.string(arguments, "format", "typed");
         Object value = typed;

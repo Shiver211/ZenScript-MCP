@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.shiver.zenscriptmcp.game.client.BindingRegistry;
 import com.shiver.zenscriptmcp.model.Json;
+import com.shiver.zenscriptmcp.protocol.ResultView;
 import com.shiver.zenscriptmcp.runtime.JobManager;
 import com.shiver.zenscriptmcp.runtime.PageStore;
 import com.shiver.zenscriptmcp.runtime.SnapshotStore;
@@ -153,20 +154,17 @@ public final class CatalogReader {
         if (!arguments.has("fields")) {
             return data;
         }
-        JsonObject projected = Json.object();
+        for (JsonElement field : arguments.getAsJsonArray("fields")) {
+            if (!data.has(field.getAsString().split("\\.", 2)[0])) {
+                context.missing(field.getAsString());
+            }
+        }
+        JsonObject projected = ResultView.project(data, arguments.getAsJsonArray("fields"));
         for (String identity : Arrays.asList("registryName", "id", "dimension")) {
             if (data.has(identity)) {
                 projected.add(identity, data.get(identity));
             }
         }
-        arguments.getAsJsonArray("fields").forEach(field -> {
-            String name = field.getAsString();
-            if (data.has(name)) {
-                projected.add(name, data.get(name));
-            } else {
-                context.missing(name);
-            }
-        });
         return projected;
     }
 }

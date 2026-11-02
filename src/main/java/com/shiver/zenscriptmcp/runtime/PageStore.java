@@ -32,12 +32,50 @@ public final class PageStore {
     public synchronized JsonObject create(
             String tool, JsonObject arguments, JsonArray rows, JsonObject metadata,
             JsonObject observation, boolean worldBound) {
+        return create(tool, arguments, rows, metadata, observation, worldBound, false);
+    }
+
+    public synchronized JsonObject document(String tool, JsonObject arguments, JsonObject result, boolean worldBound) {
+        if (result.has("pagination")) {
+            return result;
+        }
+        JsonObject metadata = Json.copy(result.getAsJsonObject("data"));
+        JsonArray rows = new JsonArray();
+        extractLists(metadata, new JsonArray(), rows);
+        return create(tool, arguments, rows, metadata, result.getAsJsonObject("observation"), worldBound, true);
+    }
+
+    private static void extractLists(JsonObject object, JsonArray path, JsonArray rows) {
+        for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+            JsonArray childPath = Json.copy(path);
+            childPath.add(entry.getKey());
+            JsonElement value = entry.getValue();
+            if (value.isJsonArray() && isList(entry.getKey())) {
+                for (JsonElement row : value.getAsJsonArray()) {
+                    rows.add(Json.object("path", childPath, "value", row));
+                }
+                entry.setValue(new JsonArray());
+            } else if (value.isJsonObject()) {
+                extractLists(value.getAsJsonObject(), childPath, rows);
+            }
+        }
+    }
+
+    private static boolean isList(String name) {
+        return "steps".equals(name) || "items".equals(name) || "slots".equals(name) || "widgets".equals(name)
+                || "added".equals(name) || "changed".equals(name) || "removed".equals(name)
+                || "enchantments".equals(name) || "attributes".equals(name) || "oreDictionary".equals(name)
+                || "buttons".equals(name) || "tanks".equals(name) || "value".equals(name);
+    }
+
+    private JsonObject create(String tool, JsonObject arguments, JsonArray rows, JsonObject metadata,
+            JsonObject observation, boolean worldBound, boolean document) {
         List<String> serialized = new ArrayList<>();
-        int bytes = 0;
+        int bytes = byteSize(Json.GSON.toJson(metadata));
         for (JsonElement row : rows) {
             String json = Json.GSON.toJson(row);
             int rowBytes = byteSize(json);
-            if (rowBytes > settings.maxPageBytes / 2 || bytes + rowBytes > settings.maxCacheBytes) {
+            if (bytes + rowBytes > settings.maxCacheBytes) {
                 throw new DomainException("result_too_large", "查询结果超过预算；请缩小范围或 fields");
             }
             bytes += rowBytes;
@@ -55,7 +93,7 @@ public final class PageStore {
             throw stale();
         }
         Page page = new Page(tool, signature(arguments), serialized, Json.copy(metadata),
-                Json.copy(observation), epoch, worldBound, bytes);
+                Json.copy(observation), epoch, worldBound, bytes, document);
         pages.put(id, page);
         retainedBytes += bytes;
         return readPage(id, page, 0, limit(arguments));
@@ -68,7 +106,10 @@ public final class PageStore {
         if (separator < 0) {
             throw stale();
         }
-        String id = cursor.substring(0, separator);
+        if (!cursor.startsWith("page:")) {
+            throw stale();
+        }
+        String id = cursor.substring(5, separator);
         Page page = pages.get(id);
         if (page == null || !tool.equals(page.tool) || !signature(arguments).equals(page.arguments)
                 || (page.worldBound && page.worldEpoch != snapshots.worldEpoch())) {
@@ -108,7 +149,10 @@ public final class PageStore {
     private JsonObject readPage(String id, Page page, int offset, int limit) {
         JsonObject data = Json.copy(page.metadata);
         JsonArray rows = new JsonArray();
-        int bytes = byteSize(Json.GSON.toJson(data)) + 2048;
+        int bytes = byteSize(Json.GSON.toJson(data)) + byteSize(Json.GSON.toJson(page.observation)) + 2048;
+        if (bytes > settings.maxPageBytes) {
+            throw new DomainException("result_too_large", "分页元数据超过预算；请缩小 fields 或 NBT path");
+        }
         int end = offset;
         while (end < page.rows.size() && rows.size() < limit) {
             String row = page.rows.get(end);
@@ -123,16 +167,48 @@ public final class PageStore {
         if (end == offset && end < page.rows.size()) {
             throw new DomainException("result_too_large", "单条记录超过分页预算；请缩小 fields");
         }
-        data.add("items", rows);
-        data.addProperty("total", page.rows.size());
-        data.addProperty("offset", offset);
-        data.addProperty("truncated", end < page.rows.size() || flag(data, "scanTruncated"));
-        data.add("nextCursor", Json.GSON.toJsonTree(end < page.rows.size() ? id + ":" + end : null));
-        return Json.object("observation", Json.copy(page.observation), "data", data);
+        if (page.document) {
+            for (JsonElement row : rows) {
+                JsonObject record = row.getAsJsonObject();
+                JsonArray path = record.getAsJsonArray("path");
+                JsonObject parent = data;
+                for (int index = 0; index < path.size() - 1; index++) {
+                    parent = parent.getAsJsonObject(path.get(index).getAsString());
+                }
+                parent.getAsJsonArray(path.get(path.size() - 1).getAsString()).add(record.get("value"));
+            }
+        } else {
+            data.add("items", rows);
+        }
+        JsonObject pagination = Json.object("snapshotId", id, "total", page.rows.size(), "offset", offset,
+                "returned", rows.size(), "hasMore", end < page.rows.size(),
+                "nextCursor", end < page.rows.size() ? "page:" + id + ":" + end : null,
+                "collectionComplete", !incomplete(data)
+                        && "complete".equals(page.observation.get("coverage").getAsString()));
+        return Json.object("observation", Json.copy(page.observation), "data", data, "pagination", pagination);
     }
 
-    private static boolean flag(JsonObject data, String key) {
-        return data.has(key) && data.get(key).getAsBoolean();
+    private static boolean incomplete(JsonElement value) {
+        if (value.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : value.getAsJsonObject().entrySet()) {
+                String key = entry.getKey();
+                if (("scanTruncated".equals(key) || "truncated".equals(key) || "cursorGap".equals(key)
+                        || key.endsWith("Truncated")) && entry.getValue().isJsonPrimitive()
+                        && entry.getValue().getAsBoolean()) {
+                    return true;
+                }
+                if (incomplete(entry.getValue())) {
+                    return true;
+                }
+            }
+        } else if (value.isJsonArray()) {
+            for (JsonElement element : value.getAsJsonArray()) {
+                if (incomplete(element)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static JsonObject signature(JsonObject arguments) {
@@ -140,6 +216,8 @@ public final class PageStore {
         signature.remove("cursor");
         signature.remove("limit");
         signature.remove("timeoutMs");
+        signature.remove("waitMs");
+        signature.remove("view");
         return signature;
     }
 
@@ -174,10 +252,11 @@ public final class PageStore {
         private final long worldEpoch;
         private final boolean worldBound;
         private final int bytes;
+        private final boolean document;
         private final long createdNanos = System.nanoTime();
 
         private Page(String tool, JsonObject arguments, List<String> rows, JsonObject metadata,
-                JsonObject observation, long worldEpoch, boolean worldBound, int bytes) {
+                JsonObject observation, long worldEpoch, boolean worldBound, int bytes, boolean document) {
             this.tool = tool;
             this.arguments = arguments;
             this.rows = rows;
@@ -186,6 +265,7 @@ public final class PageStore {
             this.worldEpoch = worldEpoch;
             this.worldBound = worldBound;
             this.bytes = bytes;
+            this.document = document;
         }
     }
 }
