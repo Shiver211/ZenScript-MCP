@@ -101,6 +101,7 @@ public final class SlotClickTask implements JobManager.Task {
         boolean changed = !ItemStack.areItemStacksEqual(before, slot.getStack())
                 || !ItemStack.areItemStacksEqual(cursorBefore, player.inventory.getItemStack());
         result.getAsJsonObject("data").addProperty("confirmation", changed ? "observed" : "unconfirmed");
+        result.getAsJsonObject("data").addProperty("verificationRequired", !changed);
         result.getAsJsonObject("data").addProperty("confirmationScope", "client_slot_observation");
         result.getAsJsonObject("data").add("slotRef", request.get("slotRef"));
         result.getAsJsonObject("data").add("item", ItemData.describe(slot.getStack()));

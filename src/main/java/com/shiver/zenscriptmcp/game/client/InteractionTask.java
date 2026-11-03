@@ -122,7 +122,9 @@ final class InteractionTask implements JobManager.Task {
         if (serverAfter == null) {
             return null;
         }
-        boolean changed = meaningfulChange(serverBefore.getAsJsonObject("data"), serverAfter.getAsJsonObject("data"));
+        boolean changed = ActionObservation.changed(serverBefore.getAsJsonObject("data"),
+                serverAfter.getAsJsonObject("data"), "block", "adjacent", "entity", "mainHand", "offHand",
+                "windowId", "containerClass", "riding", "health");
         result = evidence(serverAfter, changed ? "observed" : "unconfirmed");
         return result;
     }
@@ -235,23 +237,28 @@ final class InteractionTask implements JobManager.Task {
 
     private boolean blockChanged() {
         JsonObject after = ActionObservation.capture(context, request).getAsJsonObject("data");
-        return !before.getAsJsonObject("data").get("block").equals(after.get("block"));
-    }
-
-    private static boolean meaningfulChange(JsonObject before, JsonObject after) {
-        for (String field : new String[] {"block", "adjacent", "entity", "mainHand", "offHand",
-                "windowId", "containerClass", "riding", "health"}) {
-            if (before.has(field) && !before.get(field).equals(after.get(field))) {
-                return true;
-            }
-        }
-        return false;
+        return ActionObservation.changed(before.getAsJsonObject("data"), after, "block");
     }
 
     private JsonObject evidence(JsonObject serverAfter, String confirmation) {
+        JsonObject after = ActionObservation.capture(context, request);
+        String confirmationSource = "none";
+        String confirmationScope = "none";
+        if ("observed".equals(confirmation)) {
+            confirmationSource = "server";
+            confirmationScope = "server_state_observation";
+        } else if ("unconfirmed".equals(confirmation) && "break".equals(action)
+                && ActionObservation.changed(before.getAsJsonObject("data"), after.getAsJsonObject("data"), "block")) {
+            // 客户端目标变化也是有效观察，但不冒充服务端回执。
+            confirmation = "observed";
+            confirmationSource = "client";
+            confirmationScope = "client_target_block_observation";
+        }
         return context.result(Json.object("before", before,
-                "after", ActionObservation.capture(context, request), "serverBefore", serverBefore,
+                "after", after, "serverBefore", serverBefore,
                 "serverAfter", serverAfter, "confirmation", confirmation, "callbackResult", callbackResult,
+                "confirmationSource", confirmationSource, "confirmationScope", confirmationScope,
+                "verificationRequired", "unconfirmed".equals(confirmation),
                 "endReason", endReason, "ticks", actionTick < 0 ? 0
                         : (stopped ? stoppedTick : service.tick()) - actionTick));
     }

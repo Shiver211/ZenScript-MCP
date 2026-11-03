@@ -80,10 +80,10 @@ public final class ContainerTracker {
             identity.lastJson = serialized;
         }
         data.add("slots", slots);
-        data.add("statistics", Json.object("total", container.inventorySlots.size(), "nonempty", nonempty,
+        data.add("statistics", Json.object("slotCount", container.inventorySlots.size(), "nonempty", nonempty,
                 "empty", container.inventorySlots.size() - nonempty));
         data.addProperty("revision", identity.revision);
-        data.addProperty("collectionComplete", true);
+        data.addProperty("sourceComplete", true);
         String scope = identity.id + ":" + open.id + ":" + includeEmpty;
         return snapshots.capture(data, arguments, scope, context.settings().maxCacheBytes);
     }

@@ -104,8 +104,9 @@ public final class QueryService {
             return () -> pages.read(tool, request);
         }
         if ("mc_events".equals(tool) || "mc_chat".equals(tool)) {
-            return () -> Json.object("data", events.snapshot(request, "mc_chat".equals(tool)),
-                    "observation", snapshots.observation("runtime", 0, new JsonArray()));
+            return () -> ResultView.apply(pages.document(tool, request,
+                    Json.object("data", events.snapshot(request, "mc_chat".equals(tool)),
+                            "observation", snapshots.observation("runtime", 0, new JsonArray())), false), request);
         }
         if ("mc_image".equals(tool)) {
             return () -> screenshots.image(request.get("imageId").getAsString());
@@ -328,8 +329,7 @@ public final class QueryService {
                         "code", "read_budget_exceeded", "elapsedMicros", elapsedNanos / 1000));
             }
             if (result != null && request.has("fields") && result.has("data")) {
-                result.add("data", ResultView.project(
-                        result.getAsJsonObject("data"), request.getAsJsonArray("fields")));
+                result.add("data", ResultView.project(result.getAsJsonObject("data"), request));
             }
             return result == null ? null : pages.document(tool, request, result, worldBound(tool, side));
         }

@@ -390,9 +390,17 @@ public final class JobManager {
             job.error = failure instanceof DomainException ? ((DomainException) failure).toJson()
                     : createError(errorCode, failure.toString());
         } else {
-            job.state = JobState.SUCCEEDED;
+            job.state = isUnverified(result) ? JobState.UNVERIFIED : JobState.SUCCEEDED;
             job.result = Json.copy(result);
         }
+    }
+
+    /** 未确认是正常终态，仍须释放修改权限；不能把无异常结束当成效果已验证。 */
+    public static boolean isUnverified(JsonObject result) {
+        JsonObject data = result.has("data") ? result.getAsJsonObject("data") : result;
+        return data.has("outcome") && "unverified".equals(data.get("outcome").getAsString())
+                || data.has("confirmation") && "unconfirmed".equals(data.get("confirmation").getAsString())
+                || data.has("verificationRequired") && data.get("verificationRequired").getAsBoolean();
     }
 
     private void releaseCompletedJob(Job job) {
@@ -495,7 +503,11 @@ public final class JobManager {
     }
 
     private JsonObject result(Job job) {
-        JsonObject result = snapshots.result(job.isTerminal() ? "completed" : "accepted", "job", toJson(job));
+        String status = job.isTerminal() ? "completed" : "accepted";
+        if (job.state == JobState.UNVERIFIED) {
+            status = "unverified";
+        }
+        JsonObject result = snapshots.result(status, "job", toJson(job));
         if (job.result != null) {
             if (job.result.has("data")) {
                 result.add("data", Json.copy(job.result.getAsJsonObject("data")));
@@ -576,6 +588,7 @@ public final class JobManager {
         CANCEL_REQUESTED("cancel_requested", false),
         FINISHING("finishing", false),
         SUCCEEDED("succeeded", true),
+        UNVERIFIED("unverified", true),
         FAILED("failed", true),
         CANCELLED("cancelled", true),
         TIMED_OUT("timed_out", true);

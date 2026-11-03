@@ -15,9 +15,13 @@ public final class ConditionMatcher {
         JsonElement actual = resolve(observation, pointer);
         boolean partial = observation.has("observation") && "partial".equals(
                 observation.getAsJsonObject("observation").get("coverage").getAsString());
+        if (observation.has("observation")) {
+            JsonObject coverage = observation.getAsJsonObject("observation");
+            partial |= coverage.has("unsupported") && coverage.getAsJsonArray("unsupported").size() > 0;
+        }
         if (observation.has("pagination")) {
             JsonObject page = observation.getAsJsonObject("pagination");
-            partial |= page.get("hasMore").getAsBoolean() || !page.get("collectionComplete").getAsBoolean();
+            partial |= page.get("hasMore").getAsBoolean() || !page.get("sourceComplete").getAsBoolean();
         }
         if (actual == null) {
             if (partial || !"exists".equals(operator)) {

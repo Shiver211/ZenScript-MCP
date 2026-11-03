@@ -184,7 +184,7 @@ public final class PageStore {
         JsonObject pagination = Json.object("snapshotId", id, "total", page.rows.size(), "offset", offset,
                 "returned", rows.size(), "hasMore", end < page.rows.size(),
                 "nextCursor", end < page.rows.size() ? "page:" + id + ":" + end : null,
-                "collectionComplete", !incomplete(data)
+                "sourceComplete", !incomplete(data)
                         && "complete".equals(page.observation.get("coverage").getAsString()));
         return Json.object("observation", Json.copy(page.observation), "data", data, "pagination", pagination);
     }

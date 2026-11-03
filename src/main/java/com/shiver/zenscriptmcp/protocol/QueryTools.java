@@ -10,6 +10,7 @@ public final class QueryTools {
 
     private static final int WORLD_BORDER = 30_000_000;
     private static final int MAX_FIELDS = 64;
+    private static final int MAX_SCREENSHOT_WAIT_MILLIS = 30_000;
 
     private final ToolRegistry tools;
     private final QueryService queries;
@@ -111,7 +112,8 @@ public final class QueryTools {
                 Schema.object(Json.object("widgetId", Schema.string()), "widgetId")));
         screen.add("source", Schema.enumeration("client", "auto"));
         register("mc_screen", "读取 GUI、控件和世界选择列表；sections 可选 buttons/slots/widgets/worlds。"
-                + "summary 的 slots 省略空槽，includeEmpty=true 或 full 读取全部；自绘区域标为未知。", screen);
+                + "summary 的 slots 省略空槽，includeEmpty=true 或 full 读取全部；"
+                + "已知无法读取的自绘区域等列入 observation.unsupported，不影响支持字段的覆盖率。", screen);
     }
 
     private void data() {
@@ -177,9 +179,10 @@ public final class QueryTools {
 
     private void screenshot() {
         JsonObject properties = Json.object("maxWidth", Schema.integer(1, 4096), "maxHeight", Schema.integer(1, 4096),
-                "keepFile", Schema.bool(), "timeoutMs", Schema.integer(1, 300_000));
+                "keepFile", Schema.bool(), "timeoutMs", Schema.integer(1, 300_000),
+                "waitMs", Schema.integer(0, MAX_SCREENSHOT_WAIT_MILLIS));
         tools.register("mc_screenshot", "渲染时采集、后台编码；在 waitMs 内完成即返回 MCP image 与尺寸映射。"
-                + "accepted 时继续查同一 job_status；mc_image 可凭 imageId 重取图片。",
+                + "waitMs=0..30000；accepted 时继续查同一 job_status；mc_image 可凭 imageId 重取图片。",
                 Schema.object(properties), false, false, arguments -> queries.submit("mc_screenshot", arguments));
     }
 

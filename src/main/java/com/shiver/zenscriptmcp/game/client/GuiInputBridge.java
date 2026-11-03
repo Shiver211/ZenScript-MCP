@@ -204,7 +204,7 @@ public final class GuiInputBridge {
                     throw new DomainException("stale_reference", "GUI 引用已经失效");
                 }
                 screen = minecraft.currentScreen;
-                before = screens.dimensions();
+                before = capture();
                 startedTick = tick();
             } else if (!screenId.equals(screens.dimensions().get("screenId").getAsString())) {
                 throw new DomainException("stale_reference", "输入过程中 GUI 或缩放发生变化");
@@ -305,14 +305,27 @@ public final class GuiInputBridge {
 
         private JsonObject observe() {
             screens.update(snapshots.worldEpoch(), tick());
-            JsonObject after = screens.dimensions();
-            JsonArray text = screen == null ? new JsonArray() : texts(screen);
+            JsonObject after = capture();
             boolean changed = !before.get("screenId").equals(after.get("screenId"));
+            boolean observed = changed || ActionObservation.changed(before, after, "cursor", "slots", "focusedText");
             return Json.object("observation", snapshots.observation("client", startedTick, new JsonArray()),
                     "data", Json.object("before", before, "after", after,
-                    "delivered", true, "screenChanged", changed, "focusedText", text,
-                    "confirmation", "unconfirmed", "preEventCancelledCount", preEventCancelledCount,
+                    "delivered", true, "screenChanged", changed, "focusedText", after.get("focusedText"),
+                    "confirmation", observed ? "observed" : "unconfirmed", "confirmationSource", "client",
+                    "confirmationScope", "client_gui_observation", "verificationRequired", !observed,
+                    "preEventCancelledCount", preEventCancelledCount,
                     "coverage", "standard_gui_and_lwjgl2", "textCharactersDispatched", textOffset));
+        }
+
+        private JsonObject capture() {
+            Minecraft minecraft = Minecraft.getMinecraft();
+            JsonObject data = screens.dimensions();
+            data.add("focusedText", minecraft.currentScreen == null ? new JsonArray() : texts(minecraft.currentScreen));
+            if (minecraft.player != null) {
+                JsonObject container = ActionObservation.container(minecraft.player);
+                container.entrySet().forEach(entry -> data.add(entry.getKey(), entry.getValue()));
+            }
+            return data;
         }
 
         @Override

@@ -147,6 +147,10 @@ public final class ToolRegistry {
                     }
                 }
             }
+            if ("completed".equals(domainResult.get("status").getAsString())
+                    && JobManager.isUnverified(domainResult)) {
+                domainResult.addProperty("status", "unverified");
+            }
             domainResult = ResultView.apply(domainResult, arguments);
             if (PageStore.byteSize(Json.GSON.toJson(domainResult)) > config.queries.maxPageBytes) {
                 JsonObject oversized = snapshots.error("result_too_large", "结果超过文本预算；请缩小 fields 或 limit");
@@ -170,7 +174,7 @@ public final class ToolRegistry {
             return;
         }
         JsonObject properties = schema.getAsJsonObject("properties");
-        if (wait) {
+        if (wait && !properties.has("waitMs")) {
             properties.add("waitMs", Schema.integer(0, MAX_WAIT_MILLIS));
         }
         if (!properties.has("view")) {
@@ -259,7 +263,7 @@ public final class ToolRegistry {
     private static JsonObject createOutputSchema() {
         JsonObject properties = Json.object(
                 "schemaVersion", Json.object("type", "integer", "const", 2),
-                "status", Schema.enumeration("accepted", "completed", "error"),
+                "status", Schema.enumeration("accepted", "completed", "unverified", "error"),
                 "context", createContextSchema(),
                 "observation", createObservationSchema(),
                 "pagination", Json.object("type", "object"),
@@ -300,7 +304,8 @@ public final class ToolRegistry {
                 "capturedAt", Json.object("type", "string"),
                 "revision", Json.object("type", "integer"),
                 "coverage", Schema.enumeration("complete", "partial"),
-                "unavailable", Json.object("type", "array", "items", Json.object("type", "string")));
+                "unavailable", Json.object("type", "array", "items", Json.object("type", "string")),
+                "unsupported", Json.object("type", "array", "items", Json.object("type", "string")));
         return Json.object("type", "object", "properties", properties,
                 "required", new String[] {"source", "worldEpoch", "capturedAt", "revision", "coverage", "unavailable"});
     }

@@ -52,8 +52,8 @@ public final class WorldReader {
         World world = context.world(arguments);
         BlockPos position = arguments.has("position") ? blockPosition(arguments.getAsJsonObject("position"))
                 : context.player(Json.object()).getPosition();
-        context.checkFields(arguments, "time", "weather", "biome", "light", "spawn", "difficulty");
         JsonObject data = Json.object("dimension", world.provider.getDimension());
+        context.checkFields(arguments, data, "time", "weather", "biome", "light", "spawn", "difficulty");
         context.field(data, arguments, "time", () -> time(world.getWorldTime(), world.getTotalWorldTime()));
         context.field(data, arguments, "weather", () -> Json.object("raining", world.isRaining(),
                 "thundering", world.isThundering(), "rainStrength", world.getRainStrength(1)));
@@ -73,18 +73,19 @@ public final class WorldReader {
     }
 
     private static JsonObject time(long worldTime, long totalTime) {
-        return Json.object("worldTime", Long.toString(worldTime), "dayTime", Long.toString(worldTime),
-                "daytimeModulo", Math.floorMod(worldTime, DAY_TICKS), "totalTime", Long.toString(totalTime),
+        return Json.object("worldTime", worldTime, "dayTime", worldTime,
+                "daytimeModulo", Math.floorMod(worldTime, DAY_TICKS), "totalTime", totalTime,
                 "unit", "ticks", "dayLength", DAY_TICKS);
     }
 
     public static JsonObject block(QueryContext context, World world, BlockPos position, JsonObject arguments) {
         Chunk chunk = requireChunk(world, position);
         IBlockState state = chunk.getBlockState(position);
-        context.checkFields(arguments, "registryName", "properties", "metadata", "light", "collision", "tileEntity");
         JsonObject target = Json.object("kind", "block", "dimension", world.provider.getDimension(),
                 "instanceId", context.instanceId(), "worldEpoch", context.epoch(), "position", blockPosition(position));
         JsonObject result = Json.object("target", target);
+        context.checkFields(arguments, result, "registryName", "properties", "metadata", "light",
+                "collision", "tileEntity");
         context.field(result, arguments, "registryName", () -> String.valueOf(state.getBlock().getRegistryName()));
         context.field(result, arguments, "properties", () -> properties(state));
         context.field(result, arguments, "metadata", () -> state.getBlock().getMetaFromState(state));

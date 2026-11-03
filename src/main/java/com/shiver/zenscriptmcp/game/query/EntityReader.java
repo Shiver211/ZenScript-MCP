@@ -22,9 +22,9 @@ public final class EntityReader {
     }
 
     public static JsonObject describe(QueryContext context, Entity entity, JsonObject arguments) {
-        context.checkFields(arguments, "registryName", "name", "position", "rotation", "motion", "bounds",
-                "state", "health", "equipment", "effects", "riding", "passengers", "food", "experience", "mode");
         JsonObject data = Json.object("entityRef", reference(context, entity), "entityId", entity.getEntityId());
+        context.checkFields(arguments, data, "registryName", "name", "position", "rotation", "motion", "bounds",
+                "state", "health", "equipment", "effects", "riding", "passengers", "food", "experience", "mode");
         context.field(data, arguments, "registryName", () -> {
             ResourceLocation id = EntityList.getKey(entity);
             return id == null ? null : id.toString();

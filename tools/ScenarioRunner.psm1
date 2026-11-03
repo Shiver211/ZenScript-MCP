@@ -61,6 +61,9 @@ function Resolve-ScenarioValue {
 
 function Get-ScenarioOutcome {
     param([hashtable]$Result)
+    if ($Result.status -eq 'unverified') {
+        return 'inconclusive'
+    }
     if ($Result.status -eq 'error') {
         $code = $Result.error.code
         if ($code -in @('world_unavailable', 'player_unavailable', 'source_unavailable', 'unsupported_capability',

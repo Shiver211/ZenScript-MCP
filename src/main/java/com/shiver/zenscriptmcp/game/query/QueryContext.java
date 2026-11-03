@@ -32,6 +32,7 @@ public final class QueryContext {
     private final long worldEpoch;
     private final long stepBudgetNanos;
     private final Set<String> unavailable = new LinkedHashSet<>();
+    private final Set<String> unsupported = new LinkedHashSet<>();
 
     public QueryContext(GameExecutor.Side side, SnapshotStore snapshots,
             EventBuffer events, McpConfig.QuerySettings settings, int readBudgetMillis) {
@@ -128,6 +129,10 @@ public final class QueryContext {
         unavailable.add(field);
     }
 
+    public void unsupported(String field) {
+        unsupported.add(field);
+    }
+
     public void field(JsonObject result, JsonObject arguments, String name, Supplier<?> reader) {
         if (!wants(arguments, name)) {
             return;
@@ -154,6 +159,7 @@ public final class QueryContext {
         }
         JsonObject observation = snapshots.observation(source, startedTick, fields);
         observation.addProperty("worldEpoch", worldEpoch);
+        observation.add("unsupported", Json.GSON.toJsonTree(unsupported));
         return observation;
     }
 
@@ -161,7 +167,7 @@ public final class QueryContext {
         return Json.object("observation", observation(), "data", data);
     }
 
-    public void checkFields(JsonObject arguments, String... supported) {
+    public void checkFields(JsonObject arguments, JsonObject data, String... supported) {
         if (!arguments.has("fields")) {
             return;
         }
@@ -169,9 +175,10 @@ public final class QueryContext {
         for (String field : supported) {
             names.add(field);
         }
+        data.entrySet().forEach(entry -> names.add(entry.getKey()));
         for (JsonElement field : arguments.getAsJsonArray("fields")) {
             if (!names.contains(field.getAsString().split("\\.", 2)[0])) {
-                missing(field.getAsString());
+                unsupported(field.getAsString());
             }
         }
     }

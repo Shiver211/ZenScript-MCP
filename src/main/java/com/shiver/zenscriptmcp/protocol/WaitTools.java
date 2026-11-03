@@ -39,13 +39,11 @@ public final class WaitTools {
     public void register() {
         JsonObject ticks = tools.inputSchema("mc_wait");
         for (String name : new String[] {"mc_player", "mc_block_inspect", "mc_entity_inspect", "mc_inventory",
-                "mc_container", "mc_screen", "mc_capabilities", "mc_nbt", "mc_world_query"}) {
+                "mc_container", "mc_screen", "mc_capabilities", "mc_nbt", "mc_world_query", "mc_entities",
+                "mc_recipes", "mc_catalog", "mc_chat", "mc_events", "mc_commands"}) {
             JsonObject schema = tools.inputSchema(name);
             if (schema.has("oneOf")) {
                 schema = schema.getAsJsonArray("oneOf").get(0).getAsJsonObject();
-            }
-            if ("mc_world_query".equals(name)) {
-                schema.getAsJsonObject("properties").add("kind", Schema.enumeration("environment"));
             }
             querySchemas.put(name, schema);
         }

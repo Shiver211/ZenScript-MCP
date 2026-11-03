@@ -86,14 +86,13 @@ public final class ScreenReader {
         JsonObject data = dimensions();
         data.addProperty("class", screen == null ? "hud" : screen.getClass().getName());
         data.addProperty("open", screen != null);
-        context.checkFields(arguments, "buttons", "slots", "title", "widgets", "worlds", "tooltip", "extensions");
         if (section(arguments, "buttons")) {
             context.field(data, arguments, "buttons", () -> buttons(context));
         }
         if (screen != null) {
-            context.missing("custom_drawn_regions");
+            context.unsupported("custom_drawn_regions");
             if (QueryContext.wants(arguments, "title")) {
-                context.missing("title:not_exposed");
+                context.unsupported("title:not_exposed");
             }
             if (initializedScreen != screen && section(arguments, "buttons")
                     && QueryContext.wants(arguments, "buttons")) {
@@ -102,6 +101,7 @@ public final class ScreenReader {
         }
         if (screen instanceof GuiContainer) {
             GuiContainer gui = (GuiContainer) screen;
+            data.addProperty("windowId", gui.inventorySlots.windowId);
             if (minecraft.player != null) {
                 containers.update(minecraft.player, context.epoch(), context.startedTick());
                 data.addProperty("containerId", containers.currentId());
@@ -138,6 +138,8 @@ public final class ScreenReader {
                 throw new DomainException("unsupported_capability", "该控件未提供 tooltip 适配器");
             }
         }
+        context.checkFields(arguments, data, "buttons", "slots", "title", "widgets", "worlds", "tooltip",
+                "widgetTooltip", "extensions");
         return data;
     }
 

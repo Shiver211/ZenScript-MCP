@@ -9,6 +9,7 @@ import com.shiver.zenscriptmcp.game.query.TargetResolver;
 import com.shiver.zenscriptmcp.game.query.WorldReader;
 import com.shiver.zenscriptmcp.model.DomainException;
 import com.shiver.zenscriptmcp.model.Json;
+import java.util.Objects;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
@@ -58,6 +59,15 @@ final class ActionObservation {
             data.addProperty("snbt", stack.serializeNBT().toString());
         }
         return data;
+    }
+
+    static boolean changed(JsonObject before, JsonObject after, String... fields) {
+        for (String field : fields) {
+            if (!Objects.equals(before.get(field), after.get(field))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void captureTarget(QueryContext context, JsonObject target, JsonObject data) {

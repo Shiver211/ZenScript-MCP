@@ -14,14 +14,14 @@ import java.util.Set;
 public final class ResultView {
 
     private static final Set<String> ALWAYS = new LinkedHashSet<>(Arrays.asList(
-            "status", "state", "outcome", "confirmation", "confirmationScope", "cleanupComplete",
+            "status", "state", "outcome", "confirmation", "confirmationScope", "confirmationSource",
+            "cleanupComplete",
             "observation", "pagination", "coverage", "unavailable", "truncated", "scanTruncated",
             "cursorGap", "nextCursor", "total", "offset", "revision", "source", "worldEpoch", "instanceId",
-            "error", "fieldErrors", "collectionComplete", "recovery", "imageAvailable", "expiresAt",
+            "error", "fieldErrors", "sourceComplete", "recovery", "imageAvailable", "expiresAt",
             "actionable", "actionTarget", "unmappedReason", "hit", "unverifiedSteps", "verificationRequired",
             "containerChanged", "slotComparison", "containerTransition",
-            "emptySlotsIncluded", "supported", "unsupported", "providerAvailable",
-            "empty", "containerSlotIndex", "playerInventoryIndex", "protocolSlotNumber"));
+            "emptySlotsIncluded", "supported", "unsupported", "providerAvailable", "target"));
 
     private ResultView() {
     }
@@ -36,9 +36,19 @@ public final class ResultView {
             summarize(data);
         }
         if (arguments.has("fields")) {
-            result.add("data", project(data, arguments.getAsJsonArray("fields")));
+            result.add("data", project(data, arguments));
         }
         return result;
+    }
+
+    public static JsonObject project(JsonObject data, JsonObject arguments) {
+        JsonArray fields = Json.copy(arguments.getAsJsonArray("fields"));
+        // tooltip 是独立的显式请求，不能被通用 fields 投影再次裁掉。
+        if (arguments.has("tooltip")) {
+            fields.add("tooltip");
+            fields.add("widgetTooltip");
+        }
+        return project(data, fields);
     }
 
     public static JsonObject project(JsonObject data, JsonArray fields) {

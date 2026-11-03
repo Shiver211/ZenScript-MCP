@@ -249,9 +249,7 @@ public final class BatchTools {
                 }
                 retainedBytes += bytes;
                 results.put(id, Json.copy(value));
-                JsonObject data = value.has("data") ? value.getAsJsonObject("data") : value;
-                boolean unverified = "unconfirmed".equals(QueryContext.string(data, "confirmation", ""))
-                        || "unverified".equals(QueryContext.string(data, "outcome", ""));
+                boolean unverified = JobManager.isUnverified(value);
                 if (unverified) {
                     unverifiedSteps.add(id);
                 }
